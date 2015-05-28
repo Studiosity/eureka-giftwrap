@@ -8,7 +8,6 @@ The versions of ember and ember-data must match what we are using in eureka othe
 
 ```
 "ember": "1.12.0"
-"ember-data": "1.0.0-beta.17"
 ```
 
 ## Addons
@@ -19,3 +18,9 @@ ember-autoresize
 ```
 
 ## Adding new dependency
+
+```bash
+ember install <addon_name>
+ember giftwrap
+```
+Copy the `addons.map` and `addons.js` in `/wrappers` to the `addons` folder of the ember app in Eureka and `addons.css` to the addons folder under stylesheets for the classroom module in eureka.
