@@ -7639,6 +7639,20 @@ define('giftwrap/initializers/autoresize', ['exports', 'ember-autoresize/ext/tex
   };
 
 });
+define('giftwrap/initializers/clock', ['exports', 'giftwrap/services/clock'], function (exports, Clock) {
+
+  'use strict';
+
+  exports['default'] = {
+    name: 'clock',
+    initialize: function initialize(container, app) {
+      app.register('clock:main', Clock['default']);
+      app.inject('controller', 'clock', 'clock:main');
+      app.inject('component', 'clock', 'clock:main');
+    }
+  };
+
+});
 define('giftwrap/initializers/export-application-global', ['exports', 'ember', 'giftwrap/config/environment'], function (exports, Ember, config) {
 
   'use strict';
@@ -7674,6 +7688,64 @@ define('giftwrap/initializers/liquid-fire', ['exports', 'liquid-fire/router-dsl-
   };
 
 });
+define('giftwrap/services/clock', ['exports', 'ember'], function (exports, Ember) {
+
+  'use strict';
+
+  exports['default'] = Ember['default'].Object.extend({
+    intervalTime: 1000,
+    second: 0,
+    minute: 0,
+    five: 0,
+    quarter: 0,
+    hour: 0,
+    init: function init() {
+      var self = this,
+          interval = window.setInterval(function () {
+        self.tick.call(self);
+      }, this.get('intervalTime'));
+      this.set('interval', interval);
+    },
+    reset: function reset() {
+      this.willDestroy();
+      this.init();
+      this.setProperties({ second: 0, minute: 0, five: 0, quarter: 0, hour: 0 });
+    },
+    intervalChange: (function () {
+      if (Ember['default'].testing) {
+        return this.reset();
+      }
+      throw Error('The clock interval cannot be changed except during testing');
+    }).observes('intervalTime'),
+    tick: function tick() {
+      Ember['default'].run(this, function () {
+        var second = this.incrementProperty('second');
+
+        if (second && second % 60 === 0) {
+          var minute = this.incrementProperty('minute');
+
+          if (minute !== 0) {
+            if (minute % 5 === 0) {
+              this.incrementProperty('five');
+            }
+
+            if (minute % 15 === 0) {
+              this.incrementProperty('quarter');
+            }
+
+            if (minute % 60 === 0) {
+              this.incrementProperty('hour');
+            }
+          }
+        }
+      });
+    },
+    willDestroy: function willDestroy() {
+      window.clearInterval(this.get('interval'));
+    }
+  });
+
+});
 define('giftwrap/services/liquid-fire-modals', ['exports', 'liquid-fire/modals'], function (exports, Modals) {
 
 	'use strict';
@@ -7697,7 +7769,7 @@ define('giftwrap/templates/components/liquid-bind', ['exports'], function (expor
       var child0 = (function() {
         return {
           isHTMLBars: true,
-          revision: "Ember@1.12.0-beta.2",
+          revision: "Ember@1.12.1",
           blockParams: 1,
           cachedFragment: null,
           hasRendered: false,
@@ -7738,7 +7810,7 @@ define('giftwrap/templates/components/liquid-bind', ['exports'], function (expor
       }());
       return {
         isHTMLBars: true,
-        revision: "Ember@1.12.0-beta.2",
+        revision: "Ember@1.12.1",
         blockParams: 0,
         cachedFragment: null,
         hasRendered: false,
@@ -7781,7 +7853,7 @@ define('giftwrap/templates/components/liquid-bind', ['exports'], function (expor
         var child0 = (function() {
           return {
             isHTMLBars: true,
-            revision: "Ember@1.12.0-beta.2",
+            revision: "Ember@1.12.1",
             blockParams: 1,
             cachedFragment: null,
             hasRendered: false,
@@ -7822,7 +7894,7 @@ define('giftwrap/templates/components/liquid-bind', ['exports'], function (expor
         }());
         return {
           isHTMLBars: true,
-          revision: "Ember@1.12.0-beta.2",
+          revision: "Ember@1.12.1",
           blockParams: 1,
           cachedFragment: null,
           hasRendered: false,
@@ -7863,7 +7935,7 @@ define('giftwrap/templates/components/liquid-bind', ['exports'], function (expor
       }());
       return {
         isHTMLBars: true,
-        revision: "Ember@1.12.0-beta.2",
+        revision: "Ember@1.12.1",
         blockParams: 0,
         cachedFragment: null,
         hasRendered: false,
@@ -7903,7 +7975,7 @@ define('giftwrap/templates/components/liquid-bind', ['exports'], function (expor
     }());
     return {
       isHTMLBars: true,
-      revision: "Ember@1.12.0-beta.2",
+      revision: "Ember@1.12.1",
       blockParams: 0,
       cachedFragment: null,
       hasRendered: false,
@@ -7950,7 +8022,7 @@ define('giftwrap/templates/components/liquid-container', ['exports'], function (
   exports['default'] = Ember.HTMLBars.template((function() {
     return {
       isHTMLBars: true,
-      revision: "Ember@1.12.0-beta.2",
+      revision: "Ember@1.12.1",
       blockParams: 0,
       cachedFragment: null,
       hasRendered: false,
@@ -8000,7 +8072,7 @@ define('giftwrap/templates/components/liquid-if', ['exports'], function (exports
         var child0 = (function() {
           return {
             isHTMLBars: true,
-            revision: "Ember@1.12.0-beta.2",
+            revision: "Ember@1.12.1",
             blockParams: 0,
             cachedFragment: null,
             hasRendered: false,
@@ -8043,7 +8115,7 @@ define('giftwrap/templates/components/liquid-if', ['exports'], function (exports
         var child1 = (function() {
           return {
             isHTMLBars: true,
-            revision: "Ember@1.12.0-beta.2",
+            revision: "Ember@1.12.1",
             blockParams: 0,
             cachedFragment: null,
             hasRendered: false,
@@ -8085,7 +8157,7 @@ define('giftwrap/templates/components/liquid-if', ['exports'], function (exports
         }());
         return {
           isHTMLBars: true,
-          revision: "Ember@1.12.0-beta.2",
+          revision: "Ember@1.12.1",
           blockParams: 1,
           cachedFragment: null,
           hasRendered: false,
@@ -8126,7 +8198,7 @@ define('giftwrap/templates/components/liquid-if', ['exports'], function (exports
       }());
       return {
         isHTMLBars: true,
-        revision: "Ember@1.12.0-beta.2",
+        revision: "Ember@1.12.1",
         blockParams: 0,
         cachedFragment: null,
         hasRendered: false,
@@ -8170,7 +8242,7 @@ define('giftwrap/templates/components/liquid-if', ['exports'], function (exports
           var child0 = (function() {
             return {
               isHTMLBars: true,
-              revision: "Ember@1.12.0-beta.2",
+              revision: "Ember@1.12.1",
               blockParams: 0,
               cachedFragment: null,
               hasRendered: false,
@@ -8213,7 +8285,7 @@ define('giftwrap/templates/components/liquid-if', ['exports'], function (exports
           var child1 = (function() {
             return {
               isHTMLBars: true,
-              revision: "Ember@1.12.0-beta.2",
+              revision: "Ember@1.12.1",
               blockParams: 0,
               cachedFragment: null,
               hasRendered: false,
@@ -8255,7 +8327,7 @@ define('giftwrap/templates/components/liquid-if', ['exports'], function (exports
           }());
           return {
             isHTMLBars: true,
-            revision: "Ember@1.12.0-beta.2",
+            revision: "Ember@1.12.1",
             blockParams: 1,
             cachedFragment: null,
             hasRendered: false,
@@ -8296,7 +8368,7 @@ define('giftwrap/templates/components/liquid-if', ['exports'], function (exports
         }());
         return {
           isHTMLBars: true,
-          revision: "Ember@1.12.0-beta.2",
+          revision: "Ember@1.12.1",
           blockParams: 1,
           cachedFragment: null,
           hasRendered: false,
@@ -8337,7 +8409,7 @@ define('giftwrap/templates/components/liquid-if', ['exports'], function (exports
       }());
       return {
         isHTMLBars: true,
-        revision: "Ember@1.12.0-beta.2",
+        revision: "Ember@1.12.1",
         blockParams: 0,
         cachedFragment: null,
         hasRendered: false,
@@ -8377,7 +8449,7 @@ define('giftwrap/templates/components/liquid-if', ['exports'], function (exports
     }());
     return {
       isHTMLBars: true,
-      revision: "Ember@1.12.0-beta.2",
+      revision: "Ember@1.12.1",
       blockParams: 0,
       cachedFragment: null,
       hasRendered: false,
@@ -8424,7 +8496,7 @@ define('giftwrap/templates/components/liquid-measured', ['exports'], function (e
   exports['default'] = Ember.HTMLBars.template((function() {
     return {
       isHTMLBars: true,
-      revision: "Ember@1.12.0-beta.2",
+      revision: "Ember@1.12.1",
       blockParams: 0,
       cachedFragment: null,
       hasRendered: false,
@@ -8474,7 +8546,7 @@ define('giftwrap/templates/components/liquid-modal', ['exports'], function (expo
       var child0 = (function() {
         return {
           isHTMLBars: true,
-          revision: "Ember@1.12.0-beta.2",
+          revision: "Ember@1.12.1",
           blockParams: 0,
           cachedFragment: null,
           hasRendered: false,
@@ -8526,7 +8598,7 @@ define('giftwrap/templates/components/liquid-modal', ['exports'], function (expo
       }());
       return {
         isHTMLBars: true,
-        revision: "Ember@1.12.0-beta.2",
+        revision: "Ember@1.12.1",
         blockParams: 1,
         cachedFragment: null,
         hasRendered: false,
@@ -8574,7 +8646,7 @@ define('giftwrap/templates/components/liquid-modal', ['exports'], function (expo
     }());
     return {
       isHTMLBars: true,
-      revision: "Ember@1.12.0-beta.2",
+      revision: "Ember@1.12.1",
       blockParams: 0,
       cachedFragment: null,
       hasRendered: false,
@@ -8622,7 +8694,7 @@ define('giftwrap/templates/components/liquid-outlet', ['exports'], function (exp
     var child0 = (function() {
       return {
         isHTMLBars: true,
-        revision: "Ember@1.12.0-beta.2",
+        revision: "Ember@1.12.1",
         blockParams: 1,
         cachedFragment: null,
         hasRendered: false,
@@ -8663,7 +8735,7 @@ define('giftwrap/templates/components/liquid-outlet', ['exports'], function (exp
     }());
     return {
       isHTMLBars: true,
-      revision: "Ember@1.12.0-beta.2",
+      revision: "Ember@1.12.1",
       blockParams: 0,
       cachedFragment: null,
       hasRendered: false,
@@ -8711,7 +8783,7 @@ define('giftwrap/templates/components/liquid-spacer', ['exports'], function (exp
     var child0 = (function() {
       return {
         isHTMLBars: true,
-        revision: "Ember@1.12.0-beta.2",
+        revision: "Ember@1.12.1",
         blockParams: 0,
         cachedFragment: null,
         hasRendered: false,
@@ -8753,7 +8825,7 @@ define('giftwrap/templates/components/liquid-spacer', ['exports'], function (exp
     }());
     return {
       isHTMLBars: true,
-      revision: "Ember@1.12.0-beta.2",
+      revision: "Ember@1.12.1",
       blockParams: 0,
       cachedFragment: null,
       hasRendered: false,
@@ -8803,7 +8875,7 @@ define('giftwrap/templates/components/liquid-versions', ['exports'], function (e
         var child0 = (function() {
           return {
             isHTMLBars: true,
-            revision: "Ember@1.12.0-beta.2",
+            revision: "Ember@1.12.1",
             blockParams: 0,
             cachedFragment: null,
             hasRendered: false,
@@ -8843,7 +8915,7 @@ define('giftwrap/templates/components/liquid-versions', ['exports'], function (e
         }());
         return {
           isHTMLBars: true,
-          revision: "Ember@1.12.0-beta.2",
+          revision: "Ember@1.12.1",
           blockParams: 0,
           cachedFragment: null,
           hasRendered: false,
@@ -8883,7 +8955,7 @@ define('giftwrap/templates/components/liquid-versions', ['exports'], function (e
       }());
       return {
         isHTMLBars: true,
-        revision: "Ember@1.12.0-beta.2",
+        revision: "Ember@1.12.1",
         blockParams: 1,
         cachedFragment: null,
         hasRendered: false,
@@ -8924,7 +8996,7 @@ define('giftwrap/templates/components/liquid-versions', ['exports'], function (e
     }());
     return {
       isHTMLBars: true,
-      revision: "Ember@1.12.0-beta.2",
+      revision: "Ember@1.12.1",
       blockParams: 0,
       cachedFragment: null,
       hasRendered: false,
@@ -8973,7 +9045,7 @@ define('giftwrap/templates/components/liquid-with', ['exports'], function (expor
       var child0 = (function() {
         return {
           isHTMLBars: true,
-          revision: "Ember@1.12.0-beta.2",
+          revision: "Ember@1.12.1",
           blockParams: 1,
           cachedFragment: null,
           hasRendered: false,
@@ -9014,7 +9086,7 @@ define('giftwrap/templates/components/liquid-with', ['exports'], function (expor
       }());
       return {
         isHTMLBars: true,
-        revision: "Ember@1.12.0-beta.2",
+        revision: "Ember@1.12.1",
         blockParams: 0,
         cachedFragment: null,
         hasRendered: false,
@@ -9057,7 +9129,7 @@ define('giftwrap/templates/components/liquid-with', ['exports'], function (expor
         var child0 = (function() {
           return {
             isHTMLBars: true,
-            revision: "Ember@1.12.0-beta.2",
+            revision: "Ember@1.12.1",
             blockParams: 1,
             cachedFragment: null,
             hasRendered: false,
@@ -9098,7 +9170,7 @@ define('giftwrap/templates/components/liquid-with', ['exports'], function (expor
         }());
         return {
           isHTMLBars: true,
-          revision: "Ember@1.12.0-beta.2",
+          revision: "Ember@1.12.1",
           blockParams: 1,
           cachedFragment: null,
           hasRendered: false,
@@ -9139,7 +9211,7 @@ define('giftwrap/templates/components/liquid-with', ['exports'], function (expor
       }());
       return {
         isHTMLBars: true,
-        revision: "Ember@1.12.0-beta.2",
+        revision: "Ember@1.12.1",
         blockParams: 0,
         cachedFragment: null,
         hasRendered: false,
@@ -9179,7 +9251,7 @@ define('giftwrap/templates/components/liquid-with', ['exports'], function (expor
     }());
     return {
       isHTMLBars: true,
-      revision: "Ember@1.12.0-beta.2",
+      revision: "Ember@1.12.1",
       blockParams: 0,
       cachedFragment: null,
       hasRendered: false,
