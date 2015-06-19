@@ -5283,6 +5283,164 @@ define('liquid-fire/animate', ['exports', 'liquid-fire/promise', 'ember'], funct
   }
 
 });
+define('liquid-fire/components/liquid-measured', ['exports', 'liquid-fire/mutation-observer', 'ember', 'liquid-fire/templates/components/liquid-measured'], function (exports, MutationObserver, Ember, layout) {
+
+  'use strict';
+
+  exports.measure = measure;
+
+  exports['default'] = Ember['default'].Component.extend({
+    layout: layout['default'],
+    didInsertElement: function didInsertElement() {
+      var self = this;
+
+      // This prevents margin collapse
+      this.$().css({
+        overflow: "auto"
+      });
+
+      this.didMutate();
+
+      this.observer = new MutationObserver['default'](function (mutations) {
+        self.didMutate(mutations);
+      });
+      this.observer.observe(this.get("element"), {
+        attributes: true,
+        subtree: true,
+        childList: true,
+        characterData: true
+      });
+      this.$().bind("webkitTransitionEnd", function () {
+        self.didMutate();
+      });
+      // Chrome Memory Leak: https://bugs.webkit.org/show_bug.cgi?id=93661
+      window.addEventListener("unload", function () {
+        self.willDestroyElement();
+      });
+    },
+
+    willDestroyElement: function willDestroyElement() {
+      if (this.observer) {
+        this.observer.disconnect();
+      }
+    },
+
+    transitionMap: Ember['default'].inject.service("liquid-fire-transitions"),
+
+    didMutate: function didMutate() {
+      // by incrementing the running transitions counter here we prevent
+      // tests from falling through the gap between the time they
+      // triggered mutation the time we may actually animate in
+      // response.
+      var tmap = this.get("transitionMap");
+      tmap.incrementRunningTransitions();
+      Ember['default'].run.next(this, function () {
+        this._didMutate();
+        tmap.decrementRunningTransitions();
+      });
+    },
+
+    _didMutate: function _didMutate() {
+      var elt = this.$();
+      if (!elt || !elt[0]) {
+        return;
+      }
+      this.set("measurements", measure(elt));
+    }
+
+  });
+  function measure($elt) {
+    var width, height;
+
+    // if jQuery sees a zero dimension, it will temporarily modify the
+    // element's css to try to make its size measurable. But that's bad
+    // for us here, because we'll get an infinite recursion of mutation
+    // events. So we trap the zero case without hitting jQuery.
+
+    if ($elt[0].offsetWidth === 0) {
+      width = 0;
+    } else {
+      width = $elt.outerWidth();
+    }
+    if ($elt[0].offsetHeight === 0) {
+      height = 0;
+    } else {
+      height = $elt.outerHeight();
+    }
+
+    return {
+      width: width,
+      height: height
+    };
+  }
+
+});
+define('liquid-fire/components/liquid-spacer', ['exports', 'liquid-fire/components/liquid-measured', 'liquid-fire/growable', 'ember', 'liquid-fire/templates/components/liquid-spacer'], function (exports, liquid_measured, Growable, Ember, layout) {
+
+  'use strict';
+
+  exports['default'] = Ember['default'].Component.extend(Growable['default'], {
+    layout: layout['default'],
+    enabled: true,
+
+    didInsertElement: function didInsertElement() {
+      var child = this.$("> div");
+      var measurements = this.myMeasurements(liquid_measured.measure(child));
+      this.$().css("overflow", "hidden").outerWidth(measurements.width).outerHeight(measurements.height);
+    },
+
+    sizeChange: Ember['default'].observer("measurements", function () {
+      if (!this.get("enabled")) {
+        return;
+      }
+      var elt = this.$();
+      if (!elt || !elt[0]) {
+        return;
+      }
+      var want = this.myMeasurements(this.get("measurements"));
+      var have = liquid_measured.measure(this.$());
+      this.animateGrowth(elt, have, want);
+    }),
+
+    // given our child's outerWidth & outerHeight, figure out what our
+    // outerWidth & outerHeight should be.
+    myMeasurements: function myMeasurements(childMeasurements) {
+      var elt = this.$();
+      return {
+        width: childMeasurements.width + sumCSS(elt, padding("width")) + sumCSS(elt, border("width")),
+        height: childMeasurements.height + sumCSS(elt, padding("height")) + sumCSS(elt, border("height"))
+      };
+      //if (this.$().css('box-sizing') === 'border-box') {
+    }
+
+  });
+
+  function sides(dimension) {
+    return dimension === "width" ? ["Left", "Right"] : ["Top", "Bottom"];
+  }
+
+  function padding(dimension) {
+    var s = sides(dimension);
+    return ["padding" + s[0], "padding" + s[1]];
+  }
+
+  function border(dimension) {
+    var s = sides(dimension);
+    return ["border" + s[0] + "Width", "border" + s[1] + "Width"];
+  }
+
+  function sumCSS(elt, fields) {
+    var accum = 0;
+    for (var i = 0; i < fields.length; i++) {
+      var num = parseFloat(elt.css(fields[i]), 10);
+      if (!isNaN(num)) {
+        accum += num;
+      }
+    }
+    return accum;
+  }
+
+});
 define('liquid-fire/constrainables', ['exports', 'liquid-fire/ember-internals'], function (exports, ember_internals) {
 
   'use strict';
@@ -5877,203 +6035,115 @@ define('liquid-fire/ember-internals', ['exports', 'ember'], function (exports, E
   'use strict';
 
   exports.containingElement = containingElement;
-  exports.makeHelperShim = makeHelperShim;
-  exports.inverseYieldHelper = inverseYieldHelper;
-  exports.inverseYieldMethod = inverseYieldMethod;
   exports.routeName = routeName;
   exports.routeModel = routeModel;
+  exports.registerKeywords = registerKeywords;
+
+  var _defineProperty = function (obj, key, value) { return Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); };
 
   // Given an Ember.View, return the containing element
-  var get = Ember['default'].get;
-  var set = Ember['default'].set;
+  var require = Ember['default'].__loader.require;
+  var internal = require("htmlbars-runtime").internal;
+  var registerKeyword = require("ember-htmlbars/keywords").registerKeyword;
+  var Stream = require("ember-metal/streams/stream")["default"];
+  var isStable = require("ember-htmlbars/keywords/real_outlet")["default"].isStable;
   function containingElement(view) {
-    return view._morph.contextualElement;
+    return view._renderNode.contextualElement;
   }
 
-  function makeHelperShim(componentName, tweak) {
-    return {
-      isHTMLBars: true,
-      helperFunction: function liquidFireHelper(params, hash, options, env) {
-        var view = env.data.view;
-        var componentLookup = view.container.lookup("component-lookup:main");
-        var cls = componentLookup.lookupFactory(componentName);
-        hash.value = params[0];
-        if (hash["class"]) {
-          hash.innerClass = hash["class"];
-          delete hash["class"];
+  // This is Ember's {{#if}} predicate semantics (where empty lists
+  // count as false, etc).
+  var shouldDisplay = require("ember-views/streams/should_display")["default"];function routeName(routeIdentity) {
+    var o, r;
+    if (routeIdentity && (o = routeIdentity.outletState) && (r = o.render)) {
+      return [r.name];
+    }
+  }
+
+  function routeModel(routeIdentity) {
+    var o;
+    if (routeIdentity && (o = routeIdentity.outletState)) {
+      return [o._lf_model];
+    }
+  }
+
+  function withLockedModel(outletState) {
+    var r, c;
+    if (outletState && (r = outletState.render) && (c = r.controller) && !outletState._lf_model) {
+      outletState = Ember['default'].copy(outletState);
+      outletState._lf_model = c.get("model");
+    }
+    return outletState;
+  }
+  function registerKeywords() {
+    registerKeyword("get-outlet-state", {
+      willRender: function willRender(renderNode, env) {
+        env.view.ownerView._outlets.push(renderNode);
+      },
+
+      setupState: function setupState(lastState, env, scope, params) {
+        var outletName = env.hooks.getValue(params[0]);
+        var stream = lastState.stream;
+        var source = lastState.source;
+        if (!stream) {
+          source = { identity: {
+              outletState: withLockedModel(env.outletState[outletName])
+            } };
+          stream = new Stream(function () {
+            return source.identity;
+          });
         }
-        if (hash.id) {
-          hash.innerId = hash.id;
-          delete hash.id;
+        return { stream: stream, source: source, outletName: outletName };
+      },
+
+      render: function render(renderNode, env, scope, params, hash, template, inverse, visitor) {
+        internal.hostBlock(renderNode, env, scope, template, null, null, visitor, function (options) {
+          options.templates.template["yield"]([renderNode.state.stream]);
+        });
+      },
+      rerender: function rerender(morph, env) {
+        var newState = withLockedModel(env.outletState[morph.state.outletName]);
+        if (isStable(morph.state.source.identity, { outletState: newState })) {
+          // If our own view was stable, we preserve the same object
+          // identity so that liquid-versions will not animate us. But
+          // we still need to propagate any child changes forward.
+          Ember['default'].set(morph.state.source.identity, "outletState", newState);
+        } else {
+          // If our own view has changed, we present a whole new object,
+          // so that liquid-versions will see the change.
+          morph.state.source.identity = { outletState: newState };
         }
-        hash.tagName = "";
-        if (tweak) {
-          tweak(params, hash, options, env);
-        }
-        env.helpers.view.helperFunction.call(view, [cls], hash, options, env);
+        morph.state.stream.notify();
+      },
+      isStable: function isStable() {
+        return true;
       }
-    };
+    });
+
+    registerKeyword("set-outlet-state", {
+      setupState: function setupState(state, env, scope, params) {
+        var outletName = env.hooks.getValue(params[0]);
+        var outletState = env.hooks.getValue(params[1]);
+        return { outletState: _defineProperty({}, outletName, outletState) };
+      },
+
+      childEnv: function childEnv(state, env) {
+        return env.childWithOutletState(state.outletState);
+      },
+
+      render: function render(renderNode, env, scope, params, hash, template, inverse, visitor) {
+        internal.hostBlock(renderNode, env, scope, template, null, null, visitor, function (options) {
+          options.templates.template["yield"]();
+        });
+      },
+
+      isStable: function isStable() {
+        return true;
+      }
+    });
   }
 
-  function inverseYieldHelper(params, hash, options, env) {
-    var view = env.data.view;
-
-    while (view && !get(view, "layout")) {
-      if (view._contextView) {
-        view = view._contextView;
-      } else {
-        view = view._parentView;
-      }
-    }
-
-    return view._yieldInverse(env.data.view, env, options.morph, params);
-  }
-
-  function inverseYieldMethod(context, options, morph, blockArguments) {
-    var view = options.data.view;
-    var parentView = this._parentView;
-    var template = get(this, "inverseTemplate");
-
-    if (template) {
-      view.appendChild(Ember['default'].View, {
-        isVirtual: true,
-        tagName: "",
-        template: template,
-        _blockArguments: blockArguments,
-        _contextView: parentView,
-        _morph: morph,
-        context: get(parentView, "context"),
-        controller: get(parentView, "controller")
-      });
-    }
-  }
-
-  // This lets us hook into the outlet state.
-  var OutletBehavior = {
-    _isOutlet: true,
-
-    init: function init() {
-      this._super();
-      this._childOutlets = [];
-
-      // Our outlet state is named differently than a normal ember
-      // outlet ("_outletState"), so that our child outlets don't
-      // automatically discover it. Instead we will always push state
-      // down to them, so we can version it as we wish.
-      this.outletState = null;
-    },
-
-    setOutletState: function setOutletState(state) {
-      if (state && state.render && state.render.controller && !state._lf_model) {
-        // This is a hack to compensate for Ember 1.0's remaining use of
-        // mutability within the route state -- the controller is a
-        // singleton whose model will keep changing on us. By locking it
-        // down the first time we see the state, we can more closely
-        // emulate ember 2.0 semantics.
-        //
-        // The Ember 2.0 component attributes shouldn't suffer this
-        // problem and we can eventually drop the hack.
-        state = Ember['default'].copy(state);
-        state._lf_model = get(state.render.controller, "model");
-      }
-
-      if (!this._diffState(state)) {
-        var children = this._childOutlets;
-        for (var i = 0; i < children.length; i++) {
-          var child = children[i];
-          child.setOutletState(state);
-        }
-      }
-    },
-
-    _diffState: function _diffState(state) {
-      while (state && emptyRouteState(state)) {
-        state = state.outlets.main;
-      }
-      var different = !sameRouteState(this.outletState, state);
-
-      if (different) {
-        set(this, "outletState", state);
-      }
-
-      return different;
-    },
-
-    _parentOutlet: function _parentOutlet() {
-      var parent = this._parentView;
-      while (parent && !parent._isOutlet) {
-        parent = parent._parentView;
-      }
-      return parent;
-    },
-
-    _linkParent: Ember['default'].on("init", "parentViewDidChange", function () {
-      var parent = this._parentOutlet();
-      if (parent) {
-        this._parentOutletLink = parent;
-        parent._childOutlets.push(this);
-        if (parent._outletState && parent._outletState.outlets[this._outletName]) {
-          this.setOutletState(parent._outletState.outlets[this._outletName]);
-        }
-      }
-    }),
-
-    willDestroy: function willDestroy() {
-      if (this._parentOutletLink) {
-        this._parentOutletLink._childOutlets.removeObject(this);
-      }
-      this._super();
-    }
-  };
-
-  function emptyRouteState(state) {
-    return !state.render.ViewClass && !state.render.template;
-  }
-
-  function sameRouteState(a, b) {
-    if (!a && !b) {
-      return true;
-    }
-    if (!a || !b) {
-      return false;
-    }
-    a = a.render;
-    b = b.render;
-    for (var key in a) {
-      if (a.hasOwnProperty(key)) {
-        // name is only here for logging & debugging. If two different
-        // names result in otherwise identical states, they're still
-        // identical.
-        if (a[key] !== b[key] && key !== "name") {
-          return false;
-        }
-      }
-    }
-    return true;
-  }
-
-  // This lets us invoke an outlet with an explicitly passed outlet
-  // state, rather than inheriting it implicitly from its context.
-  var StaticOutlet = Ember['default'].OutletView.superclass.extend({
-    tagName: "",
-
-    setStaticState: Ember['default'].on("init", Ember['default'].observer("staticState", function () {
-      this.setOutletState(this.get("staticState"));
-    }))
-  });function routeName(routeState) {
-    if (routeState && routeState.render) {
-      return [routeState.render.name];
-    }
-  }
-
-  function routeModel(routeState) {
-    if (routeState) {
-      return [routeState._lf_model];
-    }
-  }
-
-  exports.OutletBehavior = OutletBehavior;
-  exports.StaticOutlet = StaticOutlet;
+  exports.shouldDisplay = shouldDisplay;
 
 });
 define('liquid-fire/growable', ['exports', 'ember', 'liquid-fire/promise'], function (exports, Ember, Promise) {
@@ -6099,6 +6169,9 @@ define('liquid-fire/growable', ['exports', 'ember', 'liquid-fire/promise'], func
     },
 
     _adaptDimension: function _adaptDimension(elt, dimension, have, want) {
+      if (have[dimension] === want[dimension]) {
+        return Promise['default'].resolve();
+      }
       var target = {};
       target["outer" + capitalize(dimension)] = [want[dimension], have[dimension]];
       return Ember['default'].$.Velocity(elt[0], target, {
@@ -6109,7 +6182,7 @@ define('liquid-fire/growable', ['exports', 'ember', 'liquid-fire/promise'], func
     },
 
     _durationFor: function _durationFor(before, after) {
-      return Math.min(this.get("growDuration") || this.constructor.prototype.growDuration, 1000 * Math.abs(before - after) / this.get("growPixelsPerSecond") || this.constructor.prototype.growPixelsPerSecond);
+      return Math.min(this.get("growDuration") || this.constructor.prototype.growDuration, 1000 * Math.abs(before - after) / (this.get("growPixelsPerSecond") || this.constructor.prototype.growPixelsPerSecond));
     }
 
   });
@@ -6247,7 +6320,7 @@ define('liquid-fire/modals', ['exports', 'ember', 'liquid-fire/modal'], function
 
   'use strict';
 
-  exports['default'] = Ember['default'].Controller.extend({
+  exports['default'] = Ember['default'].Service.extend({
     needs: ["application"],
 
     setup: Ember['default'].on("init", function () {
@@ -6647,11 +6720,146 @@ define('liquid-fire/tabbable', ['ember'], function (Ember) {
   }
 
 });
+define('liquid-fire/templates/components/liquid-measured', ['exports'], function (exports) {
+
+  'use strict';
+
+  exports['default'] = Ember.HTMLBars.template((function() {
+    return {
+      meta: {
+        "revision": "Ember@1.13.0",
+        "loc": {
+          "source": null,
+          "start": {
+            "line": 1,
+            "column": 0
+          },
+          "end": {
+            "line": 2,
+            "column": 0
+          }
+        },
+        "moduleName": "modules/liquid-fire/templates/components/liquid-measured.hbs"
+      },
+      arity: 0,
+      cachedFragment: null,
+      hasRendered: false,
+      buildFragment: function buildFragment(dom) {
+        var el0 = dom.createDocumentFragment();
+        var el1 = dom.createComment("");
+        dom.appendChild(el0, el1);
+        var el1 = dom.createTextNode("\n");
+        dom.appendChild(el0, el1);
+        return el0;
+      },
+      buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+        var morphs = new Array(1);
+        morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
+        dom.insertBoundary(fragment, 0);
+        return morphs;
+      },
+      statements: [
+        ["content","yield"]
+      ],
+      locals: [],
+      templates: []
+    };
+  }()));
+
+});
+define('liquid-fire/templates/components/liquid-spacer', ['exports'], function (exports) {
+
+  'use strict';
+
+  exports['default'] = Ember.HTMLBars.template((function() {
+    var child0 = (function() {
+      return {
+        meta: {
+          "revision": "Ember@1.13.0",
+          "loc": {
+            "source": null,
+            "start": {
+              "line": 1,
+              "column": 0
+            },
+            "end": {
+              "line": 3,
+              "column": 0
+            }
+          },
+          "moduleName": "modules/liquid-fire/templates/components/liquid-spacer.hbs"
+        },
+        arity: 0,
+        cachedFragment: null,
+        hasRendered: false,
+        buildFragment: function buildFragment(dom) {
+          var el0 = dom.createDocumentFragment();
+          var el1 = dom.createTextNode("  ");
+          dom.appendChild(el0, el1);
+          var el1 = dom.createComment("");
+          dom.appendChild(el0, el1);
+          var el1 = dom.createTextNode("\n");
+          dom.appendChild(el0, el1);
+          return el0;
+        },
+        buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+          var morphs = new Array(1);
+          morphs[0] = dom.createMorphAt(fragment,1,1,contextualElement);
+          return morphs;
+        },
+        statements: [
+          ["content","yield"]
+        ],
+        locals: [],
+        templates: []
+      };
+    }());
+    return {
+      meta: {
+        "revision": "Ember@1.13.0",
+        "loc": {
+          "source": null,
+          "start": {
+            "line": 1,
+            "column": 0
+          },
+          "end": {
+            "line": 4,
+            "column": 0
+          }
+        },
+        "moduleName": "modules/liquid-fire/templates/components/liquid-spacer.hbs"
+      },
+      arity: 0,
+      cachedFragment: null,
+      hasRendered: false,
+      buildFragment: function buildFragment(dom) {
+        var el0 = dom.createDocumentFragment();
+        var el1 = dom.createComment("");
+        dom.appendChild(el0, el1);
+        return el0;
+      },
+      buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+        var morphs = new Array(1);
+        morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
+        dom.insertBoundary(fragment, 0);
+        dom.insertBoundary(fragment, null);
+        return morphs;
+      },
+      statements: [
+        ["block","liquid-measured",[],["measurements",["subexpr","@mut",[["get","measurements"]],[]]],0,null]
+      ],
+      locals: [],
+      templates: [child0]
+    };
+  }()));
+
+});
 define('liquid-fire/transition-map', ['exports', 'liquid-fire/running-transition', 'liquid-fire/dsl', 'ember', 'liquid-fire/action', 'liquid-fire/internal-rules', 'liquid-fire/constraints'], function (exports, RunningTransition, DSL, Ember, Action, internalRules, Constraints) {
 
   'use strict';
 
-  var TransitionMap = Ember['default'].Object.extend({
+  var TransitionMap = Ember['default'].Service.extend({
     init: function init() {
       this.activeCount = 0;
       this.constraints = new Constraints['default']();
@@ -6889,6 +7097,16 @@ define('giftwrap/components/lf-overlay', ['exports', 'ember'], function (exports
   });
 
 });
+define('giftwrap/components/liquid-bind', ['exports', 'ember'], function (exports, Ember) {
+
+  'use strict';
+
+  exports['default'] = Ember['default'].Component.extend({
+    tagName: '',
+    positionalParams: ['value']
+  });
+
+});
 define('giftwrap/components/liquid-child', ['exports', 'ember'], function (exports, Ember) {
 
   'use strict';
@@ -6896,18 +7114,14 @@ define('giftwrap/components/liquid-child', ['exports', 'ember'], function (expor
   exports['default'] = Ember['default'].Component.extend({
     classNames: ['liquid-child'],
 
-    updateElementVisibility: (function () {
-      var visible = this.get('visible');
+    didInsertElement: function didInsertElement() {
       var $container = this.$();
-
-      if ($container && $container.length) {
-        $container.css('visibility', visible ? 'visible' : 'hidden');
+      if ($container) {
+        $container.css('visibility', 'hidden');
       }
-    }).on('willInsertElement').observes('visible'),
-
-    tellContainerWeRendered: Ember['default'].on('didInsertElement', function () {
       this.sendAction('didRender', this);
-    })
+    }
+
   });
 
 });
@@ -6917,7 +7131,6 @@ define('giftwrap/components/liquid-container', ['exports', 'ember', 'liquid-fire
 
   exports['default'] = Ember['default'].Component.extend(Growable['default'], {
     classNames: ["liquid-container"],
-    classNameBindings: ["liquidAnimating"],
 
     lockSize: function lockSize(elt, want) {
       elt.outerWidth(want.width);
@@ -6928,9 +7141,7 @@ define('giftwrap/components/liquid-container', ['exports', 'ember', 'liquid-fire
       var _this = this;
 
       var doUnlock = function doUnlock() {
-        if (!_this.isDestroyed) {
-          _this.set("liquidAnimating", false);
-        }
+        _this.updateAnimatingClass(false);
         var elt = _this.$();
         if (elt) {
           elt.css({ width: "", height: "" });
@@ -6943,8 +7154,28 @@ define('giftwrap/components/liquid-container', ['exports', 'ember', 'liquid-fire
       }
     },
 
+    // We're doing this manually instead of via classNameBindings
+    // because it depends on upward-data-flow, which generates warnings
+    // under Glimmer.
+    updateAnimatingClass: function updateAnimatingClass(on) {
+      if (this.isDestroyed || !this._wasInserted) {
+        return;
+      }
+      if (arguments.length === 0) {
+        on = this.get("liquidAnimating");
+      } else {
+        this.set("liquidAnimating", on);
+      }
+      if (on) {
+        this.$().addClass("liquid-animating");
+      } else {
+        this.$().removeClass("liquid-animating");
+      }
+    },
+
     startMonitoringSize: Ember['default'].on("didInsertElement", function () {
       this._wasInserted = true;
+      this.updateAnimatingClass();
     }),
 
     actions: {
@@ -6965,7 +7196,7 @@ define('giftwrap/components/liquid-container', ['exports', 'ember', 'liquid-fire
 
         // Apply '.liquid-animating' to liquid-container allowing
         // any customizable CSS control while an animating is occuring
-        this.set("liquidAnimating", true);
+        this.updateAnimatingClass(true);
       },
 
       afterChildInsertion: function afterChildInsertion(versions) {
@@ -7035,103 +7266,24 @@ define('giftwrap/components/liquid-if', ['exports', 'ember', 'liquid-fire/ember-
   'use strict';
 
   exports['default'] = Ember['default'].Component.extend({
-    _yieldInverse: ember_internals.inverseYieldMethod,
-    hasInverse: Ember['default'].computed('inverseTemplate', function () {
-      return !!this.get('inverseTemplate');
-    })
+    positionalParams: ['predicate'],
+    tagName: '',
+    helperName: 'liquid-if',
+    didReceiveAttrs: function didReceiveAttrs() {
+      var predicate = ember_internals.shouldDisplay(this.getAttr('predicate'));
+      this.set('showFirstBlock', this.inverted ? !predicate : predicate);
+    }
   });
 
 });
-define('giftwrap/components/liquid-measured', ['exports', 'liquid-fire/mutation-observer', 'ember'], function (exports, MutationObserver, Ember) {
+define('giftwrap/components/liquid-measured', ['exports', 'liquid-fire/components/liquid-measured'], function (exports, liquid_measured) {
 
-  'use strict';
+	'use strict';
 
-  exports.measure = measure;
 
-  exports['default'] = Ember['default'].Component.extend({
 
-    didInsertElement: function didInsertElement() {
-      var self = this;
-
-      // This prevents margin collapse
-      this.$().css({
-        overflow: "auto"
-      });
-
-      this.didMutate();
-
-      this.observer = new MutationObserver['default'](function (mutations) {
-        self.didMutate(mutations);
-      });
-      this.observer.observe(this.get("element"), {
-        attributes: true,
-        subtree: true,
-        childList: true,
-        characterData: true
-      });
-      this.$().bind("webkitTransitionEnd", function () {
-        self.didMutate();
-      });
-      // Chrome Memory Leak: https://bugs.webkit.org/show_bug.cgi?id=93661
-      window.addEventListener("unload", function () {
-        self.willDestroyElement();
-      });
-    },
-
-    willDestroyElement: function willDestroyElement() {
-      if (this.observer) {
-        this.observer.disconnect();
-      }
-    },
-
-    transitionMap: Ember['default'].inject.service("liquid-fire-transitions"),
-
-    didMutate: function didMutate() {
-      // by incrementing the running transitions counter here we prevent
-      // tests from falling through the gap between the time they
-      // triggered mutation the time we may actually animate in
-      // response.
-      var tmap = this.get("transitionMap");
-      tmap.incrementRunningTransitions();
-      Ember['default'].run.next(this, function () {
-        this._didMutate();
-        tmap.decrementRunningTransitions();
-      });
-    },
-
-    _didMutate: function _didMutate() {
-      var elt = this.$();
-      if (!elt || !elt[0]) {
-        return;
-      }
-      this.set("measurements", measure(elt));
-    }
-
-  });
-  function measure($elt) {
-    var width, height;
-
-    // if jQuery sees a zero dimension, it will temporarily modify the
-    // element's css to try to make its size measurable. But that's bad
-    // for us here, because we'll get an infinite recursion of mutation
-    // events. So we trap the zero case without hitting jQuery.
-
-    if ($elt[0].offsetWidth === 0) {
-      width = 0;
-    } else {
-      width = $elt.outerWidth();
-    }
-    if ($elt[0].offsetHeight === 0) {
-      height = 0;
-    } else {
-      height = $elt.outerHeight();
-    }
-
-    return {
-      width: width,
-      height: height
-    };
-  }
+	exports.default = liquid_measured.default;
+	exports.measure = liquid_measured.measure;
 
 });
 define('giftwrap/components/liquid-modal', ['exports', 'ember'], function (exports, Ember) {
@@ -7140,13 +7292,18 @@ define('giftwrap/components/liquid-modal', ['exports', 'ember'], function (expor
 
   exports['default'] = Ember['default'].Component.extend({
     classNames: ['liquid-modal'],
-    currentContext: Ember['default'].computed.oneWay('owner.modalContexts.lastObject'),
+    currentContext: Ember['default'].computed('owner.modalContexts.lastObject', function () {
+      var context = this.get('owner.modalContexts.lastObject');
+      if (context) {
+        context.view = this.innerView(context);
+      }
+      return context;
+    }),
 
     owner: Ember['default'].inject.service('liquid-fire-modals'),
 
-    innerView: Ember['default'].computed('currentContext', function () {
+    innerView: function innerView(current) {
       var self = this,
-          current = this.get('currentContext'),
           name = current.get('name'),
           container = this.get('container'),
           component = container.lookup('component-lookup:main').lookupFactory(name);
@@ -7188,7 +7345,7 @@ define('giftwrap/components/liquid-modal', ['exports', 'ember'], function (expor
       };
 
       return component.extend(args);
-    }),
+    },
 
     actions: {
       outsideClick: function outsideClick() {
@@ -7231,80 +7388,37 @@ define('giftwrap/components/liquid-modal', ['exports', 'ember'], function (expor
   }
 
 });
-define('giftwrap/components/liquid-outlet', ['exports', 'ember', 'liquid-fire/ember-internals'], function (exports, Ember, ember_internals) {
-
-	'use strict';
-
-	exports['default'] = Ember['default'].Component.extend(ember_internals.OutletBehavior);
-
-});
-define('giftwrap/components/liquid-spacer', ['exports', 'giftwrap/components/liquid-measured', 'liquid-fire/growable', 'ember'], function (exports, liquid_measured, Growable, Ember) {
+define('giftwrap/components/liquid-outlet', ['exports', 'ember'], function (exports, Ember) {
 
   'use strict';
 
-  exports['default'] = Ember['default'].Component.extend(Growable['default'], {
-    enabled: true,
-
-    didInsertElement: function didInsertElement() {
-      var child = this.$("> div");
-      var measurements = this.myMeasurements(liquid_measured.measure(child));
-      this.$().css({
-        overflow: "hidden",
-        outerWidth: measurements.width,
-        outerHeight: measurements.height
-      });
-    },
-
-    sizeChange: Ember['default'].observer("measurements", function () {
-      if (!this.get("enabled")) {
-        return;
-      }
-      var elt = this.$();
-      if (!elt || !elt[0]) {
-        return;
-      }
-      var want = this.myMeasurements(this.get("measurements"));
-      var have = liquid_measured.measure(this.$());
-      this.animateGrowth(elt, have, want);
-    }),
-
-    // given our child's outerWidth & outerHeight, figure out what our
-    // outerWidth & outerHeight should be.
-    myMeasurements: function myMeasurements(childMeasurements) {
-      var elt = this.$();
-      return {
-        width: childMeasurements.width + sumCSS(elt, padding("width")) + sumCSS(elt, border("width")),
-        height: childMeasurements.height + sumCSS(elt, padding("height")) + sumCSS(elt, border("height"))
-      };
-      //if (this.$().css('box-sizing') === 'border-box') {
+  exports['default'] = Ember['default'].Component.extend({
+    positionalParams: ['inputOutletName'],
+    tagName: '',
+    didReceiveAttrs: function didReceiveAttrs() {
+      this.set('outletName', this.attrs.inputOutletName || 'main');
     }
-
   });
 
-  function sides(dimension) {
-    return dimension === "width" ? ["Left", "Right"] : ["Top", "Bottom"];
-  }
+});
+define('giftwrap/components/liquid-spacer', ['exports', 'liquid-fire/components/liquid-spacer'], function (exports, liquid_spacer) {
 
-  function padding(dimension) {
-    var s = sides(dimension);
-    return ["padding" + s[0], "padding" + s[1]];
-  }
+	'use strict';
 
-  function border(dimension) {
-    var s = sides(dimension);
-    return ["border" + s[0] + "Width", "border" + s[1] + "Width"];
-  }
 
-  function sumCSS(elt, fields) {
-    var accum = 0;
-    for (var i = 0; i < fields.length; i++) {
-      var num = parseFloat(elt.css(fields[i]), 10);
-      if (!isNaN(num)) {
-        accum += num;
-      }
-    }
-    return accum;
-  }
+
+	exports.default = liquid_spacer.default;
+
+});
+define('giftwrap/components/liquid-unless', ['exports', 'giftwrap/components/liquid-if'], function (exports, LiquidIf) {
+
+  'use strict';
+
+  exports['default'] = LiquidIf['default'].extend({
+    helperName: 'liquid-unless',
+    layoutName: 'components/liquid-if',
+    inverted: true
+  });
 
 });
 define('giftwrap/components/liquid-versions', ['exports', 'ember', 'liquid-fire/ember-internals'], function (exports, Ember, ember_internals) {
@@ -7320,10 +7434,17 @@ define('giftwrap/components/liquid-versions', ['exports', 'ember', 'liquid-fire/
 
     transitionMap: Ember['default'].inject.service("liquid-fire-transitions"),
 
-    appendVersion: Ember['default'].on("init", Ember['default'].observer("value", function () {
-      var versions = get(this, "versions");
+    didReceiveAttrs: function didReceiveAttrs() {
+      if (!this.versions || this._lastVersion !== this.getAttr("value")) {
+        this.appendVersion();
+        this._lastVersion = this.getAttr("value");
+      }
+    },
+
+    appendVersion: function appendVersion() {
+      var versions = this.versions;
       var firstTime = false;
-      var newValue = get(this, "value");
+      var newValue = this.getAttr("value");
       var oldValue;
 
       if (!versions) {
@@ -7344,6 +7465,7 @@ define('giftwrap/components/liquid-versions', ['exports', 'ember', 'liquid-fire/
         value: newValue,
         shouldRender: newValue || get(this, "renderWhenFalse")
       };
+      newVersion.guid = Ember['default'].guidFor(newVersion);
       versions.unshiftObject(newVersion);
 
       this.firstTime = firstTime;
@@ -7354,7 +7476,7 @@ define('giftwrap/components/liquid-versions', ['exports', 'ember', 'liquid-fire/
       if (!newVersion.shouldRender && !firstTime) {
         this._transition();
       }
-    })),
+    },
 
     _transition: function _transition() {
       var _this = this;
@@ -7425,7 +7547,9 @@ define('giftwrap/components/liquid-with', ['exports', 'ember'], function (export
   'use strict';
 
   exports['default'] = Ember['default'].Component.extend({
-    name: "liquid-with"
+    name: 'liquid-with',
+    positionalParams: ['value'],
+    tagName: ''
   });
 
 });
@@ -7556,60 +7680,6 @@ define('giftwrap/controllers/object', ['exports', 'ember'], function (exports, E
 	exports['default'] = Ember['default'].Controller;
 
 });
-define('giftwrap/helpers/lf-yield-inverse', ['exports', 'liquid-fire/ember-internals'], function (exports, ember_internals) {
-
-  'use strict';
-
-  exports['default'] = {
-    isHTMLBars: true,
-    helperFunction: ember_internals.inverseYieldHelper
-  };
-
-});
-define('giftwrap/helpers/liquid-bind', ['exports', 'liquid-fire/ember-internals'], function (exports, ember_internals) {
-
-	'use strict';
-
-	exports['default'] = ember_internals.makeHelperShim("liquid-bind");
-
-});
-define('giftwrap/helpers/liquid-if', ['exports', 'liquid-fire/ember-internals'], function (exports, ember_internals) {
-
-  'use strict';
-
-  exports['default'] = ember_internals.makeHelperShim('liquid-if', function (params, hash, options) {
-    hash.helperName = 'liquid-if';
-    hash.inverseTemplate = options.inverse;
-  });
-
-});
-define('giftwrap/helpers/liquid-outlet', ['exports', 'liquid-fire/ember-internals'], function (exports, ember_internals) {
-
-  'use strict';
-
-  exports['default'] = ember_internals.makeHelperShim("liquid-outlet", function (params, hash) {
-    hash._outletName = params[0] || "main";
-  });
-
-});
-define('giftwrap/helpers/liquid-unless', ['exports', 'liquid-fire/ember-internals'], function (exports, ember_internals) {
-
-  'use strict';
-
-  exports['default'] = ember_internals.makeHelperShim('liquid-if', function (params, hash, options) {
-    hash.helperName = 'liquid-unless';
-    hash.inverseTemplate = options.template;
-    options.template = options.inverse;
-  });
-
-});
-define('giftwrap/helpers/liquid-with', ['exports', 'liquid-fire/ember-internals'], function (exports, ember_internals) {
-
-	'use strict';
-
-	exports['default'] = ember_internals.makeHelperShim("liquid-with");
-
-});
 define('giftwrap/initializers/app-version', ['exports', 'giftwrap/config/environment', 'ember'], function (exports, config, Ember) {
 
   'use strict';
@@ -7676,12 +7746,14 @@ define('giftwrap/initializers/export-application-global', ['exports', 'ember', '
   };
 
 });
-define('giftwrap/initializers/liquid-fire', ['exports', 'liquid-fire/router-dsl-ext'], function (exports) {
+define('giftwrap/initializers/liquid-fire', ['exports', 'liquid-fire/router-dsl-ext', 'liquid-fire/ember-internals'], function (exports, __dep0__, ember_internals) {
 
   'use strict';
 
-  // This initializer exists only to make sure that the following import
-  // happens before the app boots.
+  // This initializer exists only to make sure that the following
+  // imports happen before the app boots.
+  ember_internals.registerKeywords();
+
   exports['default'] = {
     name: "liquid-fire",
     initialize: function initialize() {}
@@ -7768,249 +7840,240 @@ define('giftwrap/templates/components/liquid-bind', ['exports'], function (expor
     var child0 = (function() {
       var child0 = (function() {
         return {
-          isHTMLBars: true,
-          revision: "Ember@1.12.1",
-          blockParams: 1,
+          meta: {
+            "revision": "Ember@1.13.0",
+            "loc": {
+              "source": null,
+              "start": {
+                "line": 2,
+                "column": 2
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            },
+            "moduleName": "giftwrap/templates/components/liquid-bind.hbs"
+          },
+          arity: 1,
           cachedFragment: null,
           hasRendered: false,
-          build: function build(dom) {
+          buildFragment: function buildFragment(dom) {
             var el0 = dom.createDocumentFragment();
             var el1 = dom.createComment("");
             dom.appendChild(el0, el1);
             return el0;
           },
-          render: function render(context, env, contextualElement, blockArguments) {
-            var dom = env.dom;
-            var hooks = env.hooks, set = hooks.set, content = hooks.content;
-            dom.detectNamespace(contextualElement);
-            var fragment;
-            if (env.useFragmentCache && dom.canClone) {
-              if (this.cachedFragment === null) {
-                fragment = this.build(dom);
-                if (this.hasRendered) {
-                  this.cachedFragment = fragment;
-                } else {
-                  this.hasRendered = true;
-                }
-              }
-              if (this.cachedFragment) {
-                fragment = dom.cloneNode(this.cachedFragment, true);
-              }
-            } else {
-              fragment = this.build(dom);
-            }
-            var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-            dom.insertBoundary(fragment, null);
+          buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+            var morphs = new Array(1);
+            morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
             dom.insertBoundary(fragment, 0);
-            set(env, context, "version", blockArguments[0]);
-            content(env, morph0, context, "version");
-            return fragment;
-          }
+            dom.insertBoundary(fragment, null);
+            return morphs;
+          },
+          statements: [
+            ["content","version"]
+          ],
+          locals: ["version"],
+          templates: []
         };
       }());
       return {
-        isHTMLBars: true,
-        revision: "Ember@1.12.1",
-        blockParams: 0,
+        meta: {
+          "revision": "Ember@1.13.0",
+          "loc": {
+            "source": null,
+            "start": {
+              "line": 1,
+              "column": 0
+            },
+            "end": {
+              "line": 6,
+              "column": 0
+            }
+          },
+          "moduleName": "giftwrap/templates/components/liquid-bind.hbs"
+        },
+        arity: 0,
         cachedFragment: null,
         hasRendered: false,
-        build: function build(dom) {
+        buildFragment: function buildFragment(dom) {
           var el0 = dom.createDocumentFragment();
           var el1 = dom.createComment("");
           dom.appendChild(el0, el1);
           return el0;
         },
-        render: function render(context, env, contextualElement) {
-          var dom = env.dom;
-          var hooks = env.hooks, get = hooks.get, block = hooks.block;
-          dom.detectNamespace(contextualElement);
-          var fragment;
-          if (env.useFragmentCache && dom.canClone) {
-            if (this.cachedFragment === null) {
-              fragment = this.build(dom);
-              if (this.hasRendered) {
-                this.cachedFragment = fragment;
-              } else {
-                this.hasRendered = true;
-              }
-            }
-            if (this.cachedFragment) {
-              fragment = dom.cloneNode(this.cachedFragment, true);
-            }
-          } else {
-            fragment = this.build(dom);
-          }
-          var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-          dom.insertBoundary(fragment, null);
+        buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+          var morphs = new Array(1);
+          morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
           dom.insertBoundary(fragment, 0);
-          block(env, morph0, context, "liquid-versions", [], {"value": get(env, context, "value"), "use": get(env, context, "use"), "name": "liquid-bind", "renderWhenFalse": true, "innerClass": get(env, context, "innerClass")}, child0, null);
-          return fragment;
-        }
+          dom.insertBoundary(fragment, null);
+          return morphs;
+        },
+        statements: [
+          ["block","liquid-versions",[],["value",["subexpr","@mut",[["get","attrs.value"]],[]],"use",["subexpr","@mut",[["get","use"]],[]],"name","liquid-bind","renderWhenFalse",true,"class",["subexpr","@mut",[["get","class"]],[]]],0,null]
+        ],
+        locals: [],
+        templates: [child0]
       };
     }());
     var child1 = (function() {
       var child0 = (function() {
         var child0 = (function() {
           return {
-            isHTMLBars: true,
-            revision: "Ember@1.12.1",
-            blockParams: 1,
+            meta: {
+              "revision": "Ember@1.13.0",
+              "loc": {
+                "source": null,
+                "start": {
+                  "line": 15,
+                  "column": 4
+                },
+                "end": {
+                  "line": 18,
+                  "column": 4
+                }
+              },
+              "moduleName": "giftwrap/templates/components/liquid-bind.hbs"
+            },
+            arity: 1,
             cachedFragment: null,
             hasRendered: false,
-            build: function build(dom) {
+            buildFragment: function buildFragment(dom) {
               var el0 = dom.createDocumentFragment();
               var el1 = dom.createComment("");
               dom.appendChild(el0, el1);
               return el0;
             },
-            render: function render(context, env, contextualElement, blockArguments) {
-              var dom = env.dom;
-              var hooks = env.hooks, set = hooks.set, content = hooks.content;
-              dom.detectNamespace(contextualElement);
-              var fragment;
-              if (env.useFragmentCache && dom.canClone) {
-                if (this.cachedFragment === null) {
-                  fragment = this.build(dom);
-                  if (this.hasRendered) {
-                    this.cachedFragment = fragment;
-                  } else {
-                    this.hasRendered = true;
-                  }
-                }
-                if (this.cachedFragment) {
-                  fragment = dom.cloneNode(this.cachedFragment, true);
-                }
-              } else {
-                fragment = this.build(dom);
-              }
-              var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-              dom.insertBoundary(fragment, null);
+            buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+              var morphs = new Array(1);
+              morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
               dom.insertBoundary(fragment, 0);
-              set(env, context, "version", blockArguments[0]);
-              content(env, morph0, context, "version");
-              return fragment;
-            }
+              dom.insertBoundary(fragment, null);
+              return morphs;
+            },
+            statements: [
+              ["content","version"]
+            ],
+            locals: ["version"],
+            templates: []
           };
         }());
         return {
-          isHTMLBars: true,
-          revision: "Ember@1.12.1",
-          blockParams: 1,
+          meta: {
+            "revision": "Ember@1.13.0",
+            "loc": {
+              "source": null,
+              "start": {
+                "line": 7,
+                "column": 2
+              },
+              "end": {
+                "line": 19,
+                "column": 2
+              }
+            },
+            "moduleName": "giftwrap/templates/components/liquid-bind.hbs"
+          },
+          arity: 1,
           cachedFragment: null,
           hasRendered: false,
-          build: function build(dom) {
+          buildFragment: function buildFragment(dom) {
             var el0 = dom.createDocumentFragment();
             var el1 = dom.createComment("");
             dom.appendChild(el0, el1);
             return el0;
           },
-          render: function render(context, env, contextualElement, blockArguments) {
-            var dom = env.dom;
-            var hooks = env.hooks, set = hooks.set, get = hooks.get, block = hooks.block;
-            dom.detectNamespace(contextualElement);
-            var fragment;
-            if (env.useFragmentCache && dom.canClone) {
-              if (this.cachedFragment === null) {
-                fragment = this.build(dom);
-                if (this.hasRendered) {
-                  this.cachedFragment = fragment;
-                } else {
-                  this.hasRendered = true;
-                }
-              }
-              if (this.cachedFragment) {
-                fragment = dom.cloneNode(this.cachedFragment, true);
-              }
-            } else {
-              fragment = this.build(dom);
-            }
-            var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-            dom.insertBoundary(fragment, null);
+          buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+            var morphs = new Array(1);
+            morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
             dom.insertBoundary(fragment, 0);
-            set(env, context, "container", blockArguments[0]);
-            block(env, morph0, context, "liquid-versions", [], {"value": get(env, context, "value"), "notify": get(env, context, "container"), "use": get(env, context, "use"), "name": "liquid-bind", "renderWhenFalse": true}, child0, null);
-            return fragment;
-          }
+            dom.insertBoundary(fragment, null);
+            return morphs;
+          },
+          statements: [
+            ["block","liquid-versions",[],["value",["subexpr","@mut",[["get","attrs.value"]],[]],"notify",["subexpr","@mut",[["get","container"]],[]],"use",["subexpr","@mut",[["get","use"]],[]],"name","liquid-bind","renderWhenFalse",true],0,null]
+          ],
+          locals: ["container"],
+          templates: [child0]
         };
       }());
       return {
-        isHTMLBars: true,
-        revision: "Ember@1.12.1",
-        blockParams: 0,
+        meta: {
+          "revision": "Ember@1.13.0",
+          "loc": {
+            "source": null,
+            "start": {
+              "line": 6,
+              "column": 0
+            },
+            "end": {
+              "line": 20,
+              "column": 0
+            }
+          },
+          "moduleName": "giftwrap/templates/components/liquid-bind.hbs"
+        },
+        arity: 0,
         cachedFragment: null,
         hasRendered: false,
-        build: function build(dom) {
+        buildFragment: function buildFragment(dom) {
           var el0 = dom.createDocumentFragment();
           var el1 = dom.createComment("");
           dom.appendChild(el0, el1);
           return el0;
         },
-        render: function render(context, env, contextualElement) {
-          var dom = env.dom;
-          var hooks = env.hooks, get = hooks.get, block = hooks.block;
-          dom.detectNamespace(contextualElement);
-          var fragment;
-          if (env.useFragmentCache && dom.canClone) {
-            if (this.cachedFragment === null) {
-              fragment = this.build(dom);
-              if (this.hasRendered) {
-                this.cachedFragment = fragment;
-              } else {
-                this.hasRendered = true;
-              }
-            }
-            if (this.cachedFragment) {
-              fragment = dom.cloneNode(this.cachedFragment, true);
-            }
-          } else {
-            fragment = this.build(dom);
-          }
-          var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-          dom.insertBoundary(fragment, null);
+        buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+          var morphs = new Array(1);
+          morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
           dom.insertBoundary(fragment, 0);
-          block(env, morph0, context, "liquid-container", [], {"id": get(env, context, "innerId"), "class": get(env, context, "innerClass"), "growDuration": get(env, context, "growDuration"), "growPixelsPerSecond": get(env, context, "growPixelsPerSecond"), "growEasing": get(env, context, "growEasing"), "enableGrowth": get(env, context, "enableGrowth")}, child0, null);
-          return fragment;
-        }
+          dom.insertBoundary(fragment, null);
+          return morphs;
+        },
+        statements: [
+          ["block","liquid-container",[],["id",["subexpr","@mut",[["get","id"]],[]],"class",["subexpr","@mut",[["get","class"]],[]],"growDuration",["subexpr","@mut",[["get","growDuration"]],[]],"growPixelsPerSecond",["subexpr","@mut",[["get","growPixelsPerSecond"]],[]],"growEasing",["subexpr","@mut",[["get","growEasing"]],[]],"enableGrowth",["subexpr","@mut",[["get","enableGrowth"]],[]]],0,null]
+        ],
+        locals: [],
+        templates: [child0]
       };
     }());
     return {
-      isHTMLBars: true,
-      revision: "Ember@1.12.1",
-      blockParams: 0,
+      meta: {
+        "revision": "Ember@1.13.0",
+        "loc": {
+          "source": null,
+          "start": {
+            "line": 1,
+            "column": 0
+          },
+          "end": {
+            "line": 21,
+            "column": 0
+          }
+        },
+        "moduleName": "giftwrap/templates/components/liquid-bind.hbs"
+      },
+      arity: 0,
       cachedFragment: null,
       hasRendered: false,
-      build: function build(dom) {
+      buildFragment: function buildFragment(dom) {
         var el0 = dom.createDocumentFragment();
         var el1 = dom.createComment("");
         dom.appendChild(el0, el1);
         return el0;
       },
-      render: function render(context, env, contextualElement) {
-        var dom = env.dom;
-        var hooks = env.hooks, get = hooks.get, block = hooks.block;
-        dom.detectNamespace(contextualElement);
-        var fragment;
-        if (env.useFragmentCache && dom.canClone) {
-          if (this.cachedFragment === null) {
-            fragment = this.build(dom);
-            if (this.hasRendered) {
-              this.cachedFragment = fragment;
-            } else {
-              this.hasRendered = true;
-            }
-          }
-          if (this.cachedFragment) {
-            fragment = dom.cloneNode(this.cachedFragment, true);
-          }
-        } else {
-          fragment = this.build(dom);
-        }
-        var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-        dom.insertBoundary(fragment, null);
+      buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+        var morphs = new Array(1);
+        morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
         dom.insertBoundary(fragment, 0);
-        block(env, morph0, context, "if", [get(env, context, "containerless")], {}, child0, child1);
-        return fragment;
-      }
+        dom.insertBoundary(fragment, null);
+        return morphs;
+      },
+      statements: [
+        ["block","if",[["get","containerless"]],[],0,1]
+      ],
+      locals: [],
+      templates: [child0, child1]
     };
   }()));
 
@@ -8021,43 +8084,42 @@ define('giftwrap/templates/components/liquid-container', ['exports'], function (
 
   exports['default'] = Ember.HTMLBars.template((function() {
     return {
-      isHTMLBars: true,
-      revision: "Ember@1.12.1",
-      blockParams: 0,
+      meta: {
+        "revision": "Ember@1.13.0",
+        "loc": {
+          "source": null,
+          "start": {
+            "line": 1,
+            "column": 0
+          },
+          "end": {
+            "line": 1,
+            "column": 14
+          }
+        },
+        "moduleName": "giftwrap/templates/components/liquid-container.hbs"
+      },
+      arity: 0,
       cachedFragment: null,
       hasRendered: false,
-      build: function build(dom) {
+      buildFragment: function buildFragment(dom) {
         var el0 = dom.createDocumentFragment();
         var el1 = dom.createComment("");
         dom.appendChild(el0, el1);
         return el0;
       },
-      render: function render(context, env, contextualElement) {
-        var dom = env.dom;
-        var hooks = env.hooks, get = hooks.get, inline = hooks.inline;
-        dom.detectNamespace(contextualElement);
-        var fragment;
-        if (env.useFragmentCache && dom.canClone) {
-          if (this.cachedFragment === null) {
-            fragment = this.build(dom);
-            if (this.hasRendered) {
-              this.cachedFragment = fragment;
-            } else {
-              this.hasRendered = true;
-            }
-          }
-          if (this.cachedFragment) {
-            fragment = dom.cloneNode(this.cachedFragment, true);
-          }
-        } else {
-          fragment = this.build(dom);
-        }
-        var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-        dom.insertBoundary(fragment, null);
+      buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+        var morphs = new Array(1);
+        morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
         dom.insertBoundary(fragment, 0);
-        inline(env, morph0, context, "yield", [get(env, context, "this")], {});
-        return fragment;
-      }
+        dom.insertBoundary(fragment, null);
+        return morphs;
+      },
+      statements: [
+        ["inline","yield",[["get","this"]],[]]
+      ],
+      locals: [],
+      templates: []
     };
   }()));
 
@@ -8071,12 +8133,25 @@ define('giftwrap/templates/components/liquid-if', ['exports'], function (exports
       var child0 = (function() {
         var child0 = (function() {
           return {
-            isHTMLBars: true,
-            revision: "Ember@1.12.1",
-            blockParams: 0,
+            meta: {
+              "revision": "Ember@1.13.0",
+              "loc": {
+                "source": null,
+                "start": {
+                  "line": 4,
+                  "column": 4
+                },
+                "end": {
+                  "line": 6,
+                  "column": 4
+                }
+              },
+              "moduleName": "giftwrap/templates/components/liquid-if.hbs"
+            },
+            arity: 0,
             cachedFragment: null,
             hasRendered: false,
-            build: function build(dom) {
+            buildFragment: function buildFragment(dom) {
               var el0 = dom.createDocumentFragment();
               var el1 = dom.createTextNode("      ");
               dom.appendChild(el0, el1);
@@ -8086,40 +8161,39 @@ define('giftwrap/templates/components/liquid-if', ['exports'], function (exports
               dom.appendChild(el0, el1);
               return el0;
             },
-            render: function render(context, env, contextualElement) {
-              var dom = env.dom;
-              var hooks = env.hooks, content = hooks.content;
-              dom.detectNamespace(contextualElement);
-              var fragment;
-              if (env.useFragmentCache && dom.canClone) {
-                if (this.cachedFragment === null) {
-                  fragment = this.build(dom);
-                  if (this.hasRendered) {
-                    this.cachedFragment = fragment;
-                  } else {
-                    this.hasRendered = true;
-                  }
-                }
-                if (this.cachedFragment) {
-                  fragment = dom.cloneNode(this.cachedFragment, true);
-                }
-              } else {
-                fragment = this.build(dom);
-              }
-              var morph0 = dom.createMorphAt(fragment,1,1,contextualElement);
-              content(env, morph0, context, "yield");
-              return fragment;
-            }
+            buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+              var morphs = new Array(1);
+              morphs[0] = dom.createMorphAt(fragment,1,1,contextualElement);
+              return morphs;
+            },
+            statements: [
+              ["content","yield"]
+            ],
+            locals: [],
+            templates: []
           };
         }());
         var child1 = (function() {
           return {
-            isHTMLBars: true,
-            revision: "Ember@1.12.1",
-            blockParams: 0,
+            meta: {
+              "revision": "Ember@1.13.0",
+              "loc": {
+                "source": null,
+                "start": {
+                  "line": 6,
+                  "column": 4
+                },
+                "end": {
+                  "line": 8,
+                  "column": 4
+                }
+              },
+              "moduleName": "giftwrap/templates/components/liquid-if.hbs"
+            },
+            arity: 0,
             cachedFragment: null,
             hasRendered: false,
-            build: function build(dom) {
+            buildFragment: function buildFragment(dom) {
               var el0 = dom.createDocumentFragment();
               var el1 = dom.createTextNode("      ");
               dom.appendChild(el0, el1);
@@ -8129,111 +8203,94 @@ define('giftwrap/templates/components/liquid-if', ['exports'], function (exports
               dom.appendChild(el0, el1);
               return el0;
             },
-            render: function render(context, env, contextualElement) {
-              var dom = env.dom;
-              var hooks = env.hooks, content = hooks.content;
-              dom.detectNamespace(contextualElement);
-              var fragment;
-              if (env.useFragmentCache && dom.canClone) {
-                if (this.cachedFragment === null) {
-                  fragment = this.build(dom);
-                  if (this.hasRendered) {
-                    this.cachedFragment = fragment;
-                  } else {
-                    this.hasRendered = true;
-                  }
-                }
-                if (this.cachedFragment) {
-                  fragment = dom.cloneNode(this.cachedFragment, true);
-                }
-              } else {
-                fragment = this.build(dom);
-              }
-              var morph0 = dom.createMorphAt(fragment,1,1,contextualElement);
-              content(env, morph0, context, "lf-yield-inverse");
-              return fragment;
-            }
+            buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+              var morphs = new Array(1);
+              morphs[0] = dom.createMorphAt(fragment,1,1,contextualElement);
+              return morphs;
+            },
+            statements: [
+              ["inline","yield",[],["to","inverse"]]
+            ],
+            locals: [],
+            templates: []
           };
         }());
         return {
-          isHTMLBars: true,
-          revision: "Ember@1.12.1",
-          blockParams: 1,
+          meta: {
+            "revision": "Ember@1.13.0",
+            "loc": {
+              "source": null,
+              "start": {
+                "line": 2,
+                "column": 2
+              },
+              "end": {
+                "line": 9,
+                "column": 2
+              }
+            },
+            "moduleName": "giftwrap/templates/components/liquid-if.hbs"
+          },
+          arity: 1,
           cachedFragment: null,
           hasRendered: false,
-          build: function build(dom) {
+          buildFragment: function buildFragment(dom) {
             var el0 = dom.createDocumentFragment();
             var el1 = dom.createComment("");
             dom.appendChild(el0, el1);
             return el0;
           },
-          render: function render(context, env, contextualElement, blockArguments) {
-            var dom = env.dom;
-            var hooks = env.hooks, set = hooks.set, get = hooks.get, block = hooks.block;
-            dom.detectNamespace(contextualElement);
-            var fragment;
-            if (env.useFragmentCache && dom.canClone) {
-              if (this.cachedFragment === null) {
-                fragment = this.build(dom);
-                if (this.hasRendered) {
-                  this.cachedFragment = fragment;
-                } else {
-                  this.hasRendered = true;
-                }
-              }
-              if (this.cachedFragment) {
-                fragment = dom.cloneNode(this.cachedFragment, true);
-              }
-            } else {
-              fragment = this.build(dom);
-            }
-            var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-            dom.insertBoundary(fragment, null);
+          buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+            var morphs = new Array(1);
+            morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
             dom.insertBoundary(fragment, 0);
-            set(env, context, "valueVersion", blockArguments[0]);
-            block(env, morph0, context, "if", [get(env, context, "valueVersion")], {}, child0, child1);
-            return fragment;
-          }
+            dom.insertBoundary(fragment, null);
+            return morphs;
+          },
+          statements: [
+            ["block","if",[["get","valueVersion"]],[],0,1]
+          ],
+          locals: ["valueVersion"],
+          templates: [child0, child1]
         };
       }());
       return {
-        isHTMLBars: true,
-        revision: "Ember@1.12.1",
-        blockParams: 0,
+        meta: {
+          "revision": "Ember@1.13.0",
+          "loc": {
+            "source": null,
+            "start": {
+              "line": 1,
+              "column": 0
+            },
+            "end": {
+              "line": 10,
+              "column": 0
+            }
+          },
+          "moduleName": "giftwrap/templates/components/liquid-if.hbs"
+        },
+        arity: 0,
         cachedFragment: null,
         hasRendered: false,
-        build: function build(dom) {
+        buildFragment: function buildFragment(dom) {
           var el0 = dom.createDocumentFragment();
           var el1 = dom.createComment("");
           dom.appendChild(el0, el1);
           return el0;
         },
-        render: function render(context, env, contextualElement) {
-          var dom = env.dom;
-          var hooks = env.hooks, get = hooks.get, block = hooks.block;
-          dom.detectNamespace(contextualElement);
-          var fragment;
-          if (env.useFragmentCache && dom.canClone) {
-            if (this.cachedFragment === null) {
-              fragment = this.build(dom);
-              if (this.hasRendered) {
-                this.cachedFragment = fragment;
-              } else {
-                this.hasRendered = true;
-              }
-            }
-            if (this.cachedFragment) {
-              fragment = dom.cloneNode(this.cachedFragment, true);
-            }
-          } else {
-            fragment = this.build(dom);
-          }
-          var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-          dom.insertBoundary(fragment, null);
+        buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+          var morphs = new Array(1);
+          morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
           dom.insertBoundary(fragment, 0);
-          block(env, morph0, context, "liquid-versions", [], {"value": get(env, context, "value"), "name": get(env, context, "helperName"), "use": get(env, context, "use"), "renderWhenFalse": get(env, context, "hasInverse"), "innerClass": get(env, context, "innerClass")}, child0, null);
-          return fragment;
-        }
+          dom.insertBoundary(fragment, null);
+          return morphs;
+        },
+        statements: [
+          ["block","liquid-versions",[],["value",["subexpr","@mut",[["get","showFirstBlock"]],[]],"name",["subexpr","@mut",[["get","helperName"]],[]],"use",["subexpr","@mut",[["get","use"]],[]],"renderWhenFalse",["subexpr","hasBlock",["inverse"],[]],"class",["subexpr","@mut",[["get","class"]],[]]],0,null]
+        ],
+        locals: [],
+        templates: [child0]
       };
     }());
     var child1 = (function() {
@@ -8241,12 +8298,25 @@ define('giftwrap/templates/components/liquid-if', ['exports'], function (exports
         var child0 = (function() {
           var child0 = (function() {
             return {
-              isHTMLBars: true,
-              revision: "Ember@1.12.1",
-              blockParams: 0,
+              meta: {
+                "revision": "Ember@1.13.0",
+                "loc": {
+                  "source": null,
+                  "start": {
+                    "line": 21,
+                    "column": 6
+                  },
+                  "end": {
+                    "line": 23,
+                    "column": 6
+                  }
+                },
+                "moduleName": "giftwrap/templates/components/liquid-if.hbs"
+              },
+              arity: 0,
               cachedFragment: null,
               hasRendered: false,
-              build: function build(dom) {
+              buildFragment: function buildFragment(dom) {
                 var el0 = dom.createDocumentFragment();
                 var el1 = dom.createTextNode("        ");
                 dom.appendChild(el0, el1);
@@ -8256,40 +8326,39 @@ define('giftwrap/templates/components/liquid-if', ['exports'], function (exports
                 dom.appendChild(el0, el1);
                 return el0;
               },
-              render: function render(context, env, contextualElement) {
-                var dom = env.dom;
-                var hooks = env.hooks, content = hooks.content;
-                dom.detectNamespace(contextualElement);
-                var fragment;
-                if (env.useFragmentCache && dom.canClone) {
-                  if (this.cachedFragment === null) {
-                    fragment = this.build(dom);
-                    if (this.hasRendered) {
-                      this.cachedFragment = fragment;
-                    } else {
-                      this.hasRendered = true;
-                    }
-                  }
-                  if (this.cachedFragment) {
-                    fragment = dom.cloneNode(this.cachedFragment, true);
-                  }
-                } else {
-                  fragment = this.build(dom);
-                }
-                var morph0 = dom.createMorphAt(fragment,1,1,contextualElement);
-                content(env, morph0, context, "yield");
-                return fragment;
-              }
+              buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+                var morphs = new Array(1);
+                morphs[0] = dom.createMorphAt(fragment,1,1,contextualElement);
+                return morphs;
+              },
+              statements: [
+                ["content","yield"]
+              ],
+              locals: [],
+              templates: []
             };
           }());
           var child1 = (function() {
             return {
-              isHTMLBars: true,
-              revision: "Ember@1.12.1",
-              blockParams: 0,
+              meta: {
+                "revision": "Ember@1.13.0",
+                "loc": {
+                  "source": null,
+                  "start": {
+                    "line": 23,
+                    "column": 6
+                  },
+                  "end": {
+                    "line": 25,
+                    "column": 6
+                  }
+                },
+                "moduleName": "giftwrap/templates/components/liquid-if.hbs"
+              },
+              arity: 0,
               cachedFragment: null,
               hasRendered: false,
-              build: function build(dom) {
+              buildFragment: function buildFragment(dom) {
                 var el0 = dom.createDocumentFragment();
                 var el1 = dom.createTextNode("        ");
                 dom.appendChild(el0, el1);
@@ -8299,240 +8368,172 @@ define('giftwrap/templates/components/liquid-if', ['exports'], function (exports
                 dom.appendChild(el0, el1);
                 return el0;
               },
-              render: function render(context, env, contextualElement) {
-                var dom = env.dom;
-                var hooks = env.hooks, content = hooks.content;
-                dom.detectNamespace(contextualElement);
-                var fragment;
-                if (env.useFragmentCache && dom.canClone) {
-                  if (this.cachedFragment === null) {
-                    fragment = this.build(dom);
-                    if (this.hasRendered) {
-                      this.cachedFragment = fragment;
-                    } else {
-                      this.hasRendered = true;
-                    }
-                  }
-                  if (this.cachedFragment) {
-                    fragment = dom.cloneNode(this.cachedFragment, true);
-                  }
-                } else {
-                  fragment = this.build(dom);
-                }
-                var morph0 = dom.createMorphAt(fragment,1,1,contextualElement);
-                content(env, morph0, context, "lf-yield-inverse");
-                return fragment;
-              }
+              buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+                var morphs = new Array(1);
+                morphs[0] = dom.createMorphAt(fragment,1,1,contextualElement);
+                return morphs;
+              },
+              statements: [
+                ["inline","yield",[],["to","inverse"]]
+              ],
+              locals: [],
+              templates: []
             };
           }());
           return {
-            isHTMLBars: true,
-            revision: "Ember@1.12.1",
-            blockParams: 1,
+            meta: {
+              "revision": "Ember@1.13.0",
+              "loc": {
+                "source": null,
+                "start": {
+                  "line": 19,
+                  "column": 4
+                },
+                "end": {
+                  "line": 26,
+                  "column": 4
+                }
+              },
+              "moduleName": "giftwrap/templates/components/liquid-if.hbs"
+            },
+            arity: 1,
             cachedFragment: null,
             hasRendered: false,
-            build: function build(dom) {
+            buildFragment: function buildFragment(dom) {
               var el0 = dom.createDocumentFragment();
               var el1 = dom.createComment("");
               dom.appendChild(el0, el1);
               return el0;
             },
-            render: function render(context, env, contextualElement, blockArguments) {
-              var dom = env.dom;
-              var hooks = env.hooks, set = hooks.set, get = hooks.get, block = hooks.block;
-              dom.detectNamespace(contextualElement);
-              var fragment;
-              if (env.useFragmentCache && dom.canClone) {
-                if (this.cachedFragment === null) {
-                  fragment = this.build(dom);
-                  if (this.hasRendered) {
-                    this.cachedFragment = fragment;
-                  } else {
-                    this.hasRendered = true;
-                  }
-                }
-                if (this.cachedFragment) {
-                  fragment = dom.cloneNode(this.cachedFragment, true);
-                }
-              } else {
-                fragment = this.build(dom);
-              }
-              var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-              dom.insertBoundary(fragment, null);
+            buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+              var morphs = new Array(1);
+              morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
               dom.insertBoundary(fragment, 0);
-              set(env, context, "valueVersion", blockArguments[0]);
-              block(env, morph0, context, "if", [get(env, context, "valueVersion")], {}, child0, child1);
-              return fragment;
-            }
+              dom.insertBoundary(fragment, null);
+              return morphs;
+            },
+            statements: [
+              ["block","if",[["get","valueVersion"]],[],0,1]
+            ],
+            locals: ["valueVersion"],
+            templates: [child0, child1]
           };
         }());
         return {
-          isHTMLBars: true,
-          revision: "Ember@1.12.1",
-          blockParams: 1,
+          meta: {
+            "revision": "Ember@1.13.0",
+            "loc": {
+              "source": null,
+              "start": {
+                "line": 11,
+                "column": 2
+              },
+              "end": {
+                "line": 27,
+                "column": 2
+              }
+            },
+            "moduleName": "giftwrap/templates/components/liquid-if.hbs"
+          },
+          arity: 1,
           cachedFragment: null,
           hasRendered: false,
-          build: function build(dom) {
+          buildFragment: function buildFragment(dom) {
             var el0 = dom.createDocumentFragment();
             var el1 = dom.createComment("");
             dom.appendChild(el0, el1);
             return el0;
           },
-          render: function render(context, env, contextualElement, blockArguments) {
-            var dom = env.dom;
-            var hooks = env.hooks, set = hooks.set, get = hooks.get, block = hooks.block;
-            dom.detectNamespace(contextualElement);
-            var fragment;
-            if (env.useFragmentCache && dom.canClone) {
-              if (this.cachedFragment === null) {
-                fragment = this.build(dom);
-                if (this.hasRendered) {
-                  this.cachedFragment = fragment;
-                } else {
-                  this.hasRendered = true;
-                }
-              }
-              if (this.cachedFragment) {
-                fragment = dom.cloneNode(this.cachedFragment, true);
-              }
-            } else {
-              fragment = this.build(dom);
-            }
-            var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-            dom.insertBoundary(fragment, null);
+          buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+            var morphs = new Array(1);
+            morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
             dom.insertBoundary(fragment, 0);
-            set(env, context, "container", blockArguments[0]);
-            block(env, morph0, context, "liquid-versions", [], {"value": get(env, context, "value"), "notify": get(env, context, "container"), "name": get(env, context, "helperName"), "use": get(env, context, "use"), "renderWhenFalse": get(env, context, "hasInverse")}, child0, null);
-            return fragment;
-          }
+            dom.insertBoundary(fragment, null);
+            return morphs;
+          },
+          statements: [
+            ["block","liquid-versions",[],["value",["subexpr","@mut",[["get","showFirstBlock"]],[]],"notify",["subexpr","@mut",[["get","container"]],[]],"name",["subexpr","@mut",[["get","helperName"]],[]],"use",["subexpr","@mut",[["get","use"]],[]],"renderWhenFalse",["subexpr","hasBlock",["inverse"],[]]],0,null]
+          ],
+          locals: ["container"],
+          templates: [child0]
         };
       }());
       return {
-        isHTMLBars: true,
-        revision: "Ember@1.12.1",
-        blockParams: 0,
+        meta: {
+          "revision": "Ember@1.13.0",
+          "loc": {
+            "source": null,
+            "start": {
+              "line": 10,
+              "column": 0
+            },
+            "end": {
+              "line": 28,
+              "column": 0
+            }
+          },
+          "moduleName": "giftwrap/templates/components/liquid-if.hbs"
+        },
+        arity: 0,
         cachedFragment: null,
         hasRendered: false,
-        build: function build(dom) {
+        buildFragment: function buildFragment(dom) {
           var el0 = dom.createDocumentFragment();
           var el1 = dom.createComment("");
           dom.appendChild(el0, el1);
           return el0;
         },
-        render: function render(context, env, contextualElement) {
-          var dom = env.dom;
-          var hooks = env.hooks, get = hooks.get, block = hooks.block;
-          dom.detectNamespace(contextualElement);
-          var fragment;
-          if (env.useFragmentCache && dom.canClone) {
-            if (this.cachedFragment === null) {
-              fragment = this.build(dom);
-              if (this.hasRendered) {
-                this.cachedFragment = fragment;
-              } else {
-                this.hasRendered = true;
-              }
-            }
-            if (this.cachedFragment) {
-              fragment = dom.cloneNode(this.cachedFragment, true);
-            }
-          } else {
-            fragment = this.build(dom);
-          }
-          var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-          dom.insertBoundary(fragment, null);
+        buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+          var morphs = new Array(1);
+          morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
           dom.insertBoundary(fragment, 0);
-          block(env, morph0, context, "liquid-container", [], {"id": get(env, context, "innerId"), "class": get(env, context, "innerClass"), "growDuration": get(env, context, "growDuration"), "growPixelsPerSecond": get(env, context, "growPixelsPerSecond"), "growEasing": get(env, context, "growEasing"), "enableGrowth": get(env, context, "enableGrowth")}, child0, null);
-          return fragment;
-        }
+          dom.insertBoundary(fragment, null);
+          return morphs;
+        },
+        statements: [
+          ["block","liquid-container",[],["id",["subexpr","@mut",[["get","id"]],[]],"class",["subexpr","@mut",[["get","class"]],[]],"growDuration",["subexpr","@mut",[["get","growDuration"]],[]],"growPixelsPerSecond",["subexpr","@mut",[["get","growPixelsPerSecond"]],[]],"growEasing",["subexpr","@mut",[["get","growEasing"]],[]],"enableGrowth",["subexpr","@mut",[["get","enableGrowth"]],[]]],0,null]
+        ],
+        locals: [],
+        templates: [child0]
       };
     }());
     return {
-      isHTMLBars: true,
-      revision: "Ember@1.12.1",
-      blockParams: 0,
+      meta: {
+        "revision": "Ember@1.13.0",
+        "loc": {
+          "source": null,
+          "start": {
+            "line": 1,
+            "column": 0
+          },
+          "end": {
+            "line": 29,
+            "column": 0
+          }
+        },
+        "moduleName": "giftwrap/templates/components/liquid-if.hbs"
+      },
+      arity: 0,
       cachedFragment: null,
       hasRendered: false,
-      build: function build(dom) {
+      buildFragment: function buildFragment(dom) {
         var el0 = dom.createDocumentFragment();
         var el1 = dom.createComment("");
         dom.appendChild(el0, el1);
         return el0;
       },
-      render: function render(context, env, contextualElement) {
-        var dom = env.dom;
-        var hooks = env.hooks, get = hooks.get, block = hooks.block;
-        dom.detectNamespace(contextualElement);
-        var fragment;
-        if (env.useFragmentCache && dom.canClone) {
-          if (this.cachedFragment === null) {
-            fragment = this.build(dom);
-            if (this.hasRendered) {
-              this.cachedFragment = fragment;
-            } else {
-              this.hasRendered = true;
-            }
-          }
-          if (this.cachedFragment) {
-            fragment = dom.cloneNode(this.cachedFragment, true);
-          }
-        } else {
-          fragment = this.build(dom);
-        }
-        var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
+      buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+        var morphs = new Array(1);
+        morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
+        dom.insertBoundary(fragment, 0);
         dom.insertBoundary(fragment, null);
-        dom.insertBoundary(fragment, 0);
-        block(env, morph0, context, "if", [get(env, context, "containerless")], {}, child0, child1);
-        return fragment;
-      }
-    };
-  }()));
-
-});
-define('giftwrap/templates/components/liquid-measured', ['exports'], function (exports) {
-
-  'use strict';
-
-  exports['default'] = Ember.HTMLBars.template((function() {
-    return {
-      isHTMLBars: true,
-      revision: "Ember@1.12.1",
-      blockParams: 0,
-      cachedFragment: null,
-      hasRendered: false,
-      build: function build(dom) {
-        var el0 = dom.createDocumentFragment();
-        var el1 = dom.createComment("");
-        dom.appendChild(el0, el1);
-        var el1 = dom.createTextNode("\n");
-        dom.appendChild(el0, el1);
-        return el0;
+        return morphs;
       },
-      render: function render(context, env, contextualElement) {
-        var dom = env.dom;
-        var hooks = env.hooks, content = hooks.content;
-        dom.detectNamespace(contextualElement);
-        var fragment;
-        if (env.useFragmentCache && dom.canClone) {
-          if (this.cachedFragment === null) {
-            fragment = this.build(dom);
-            if (this.hasRendered) {
-              this.cachedFragment = fragment;
-            } else {
-              this.hasRendered = true;
-            }
-          }
-          if (this.cachedFragment) {
-            fragment = dom.cloneNode(this.cachedFragment, true);
-          }
-        } else {
-          fragment = this.build(dom);
-        }
-        var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-        dom.insertBoundary(fragment, 0);
-        content(env, morph0, context, "yield");
-        return fragment;
-      }
+      statements: [
+        ["block","if",[["get","containerless"]],[],0,1]
+      ],
+      locals: [],
+      templates: [child0, child1]
     };
   }()));
 
@@ -8545,12 +8546,25 @@ define('giftwrap/templates/components/liquid-modal', ['exports'], function (expo
     var child0 = (function() {
       var child0 = (function() {
         return {
-          isHTMLBars: true,
-          revision: "Ember@1.12.1",
-          blockParams: 0,
+          meta: {
+            "revision": "Ember@1.13.0",
+            "loc": {
+              "source": null,
+              "start": {
+                "line": 2,
+                "column": 2
+              },
+              "end": {
+                "line": 6,
+                "column": 2
+              }
+            },
+            "moduleName": "giftwrap/templates/components/liquid-modal.hbs"
+          },
+          arity: 0,
           cachedFragment: null,
           hasRendered: false,
-          build: function build(dom) {
+          buildFragment: function buildFragment(dom) {
             var el0 = dom.createDocumentFragment();
             var el1 = dom.createTextNode("    ");
             dom.appendChild(el0, el1);
@@ -8567,42 +8581,45 @@ define('giftwrap/templates/components/liquid-modal', ['exports'], function (expo
             dom.appendChild(el0, el1);
             return el0;
           },
-          render: function render(context, env, contextualElement) {
-            var dom = env.dom;
-            var hooks = env.hooks, element = hooks.element, get = hooks.get, inline = hooks.inline;
-            dom.detectNamespace(contextualElement);
-            var fragment;
-            if (env.useFragmentCache && dom.canClone) {
-              if (this.cachedFragment === null) {
-                fragment = this.build(dom);
-                if (this.hasRendered) {
-                  this.cachedFragment = fragment;
-                } else {
-                  this.hasRendered = true;
-                }
-              }
-              if (this.cachedFragment) {
-                fragment = dom.cloneNode(this.cachedFragment, true);
-              }
-            } else {
-              fragment = this.build(dom);
-            }
+          buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
             var element0 = dom.childAt(fragment, [1]);
-            var morph0 = dom.createMorphAt(element0,1,1);
-            element(env, element0, context, "bind-attr", [], {"class": ":lf-dialog cc.options.dialogClass"});
-            element(env, element0, context, "bind-attr", [], {"aria-labelledby": "cc.options.ariaLabelledBy", "aria-label": "cc.options.ariaLabel"});
-            inline(env, morph0, context, "view", [get(env, context, "innerView")], {"dismiss": "dismiss"});
-            return fragment;
-          }
+            var morphs = new Array(4);
+            morphs[0] = dom.createAttrMorph(element0, 'class');
+            morphs[1] = dom.createAttrMorph(element0, 'aria-labelledby');
+            morphs[2] = dom.createAttrMorph(element0, 'aria-label');
+            morphs[3] = dom.createMorphAt(element0,1,1);
+            return morphs;
+          },
+          statements: [
+            ["attribute","class",["concat",["lf-dialog ",["get","cc.options.dialogClass"]]]],
+            ["attribute","aria-labelledby",["get","cc.options.ariaLabelledBy"]],
+            ["attribute","aria-label",["get","cc.options.ariaLabel"]],
+            ["inline","view",[["get","cc.view"]],["dismiss","dismiss"]]
+          ],
+          locals: [],
+          templates: []
         };
       }());
       return {
-        isHTMLBars: true,
-        revision: "Ember@1.12.1",
-        blockParams: 1,
+        meta: {
+          "revision": "Ember@1.13.0",
+          "loc": {
+            "source": null,
+            "start": {
+              "line": 1,
+              "column": 0
+            },
+            "end": {
+              "line": 8,
+              "column": 0
+            }
+          },
+          "moduleName": "giftwrap/templates/components/liquid-modal.hbs"
+        },
+        arity: 1,
         cachedFragment: null,
         hasRendered: false,
-        build: function build(dom) {
+        buildFragment: function buildFragment(dom) {
           var el0 = dom.createDocumentFragment();
           var el1 = dom.createComment("");
           dom.appendChild(el0, el1);
@@ -8614,74 +8631,58 @@ define('giftwrap/templates/components/liquid-modal', ['exports'], function (expo
           dom.appendChild(el0, el1);
           return el0;
         },
-        render: function render(context, env, contextualElement, blockArguments) {
-          var dom = env.dom;
-          var hooks = env.hooks, set = hooks.set, block = hooks.block, content = hooks.content;
-          dom.detectNamespace(contextualElement);
-          var fragment;
-          if (env.useFragmentCache && dom.canClone) {
-            if (this.cachedFragment === null) {
-              fragment = this.build(dom);
-              if (this.hasRendered) {
-                this.cachedFragment = fragment;
-              } else {
-                this.hasRendered = true;
-              }
-            }
-            if (this.cachedFragment) {
-              fragment = dom.cloneNode(this.cachedFragment, true);
-            }
-          } else {
-            fragment = this.build(dom);
-          }
-          var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-          var morph1 = dom.createMorphAt(fragment,2,2,contextualElement);
+        buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+          var morphs = new Array(2);
+          morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
+          morphs[1] = dom.createMorphAt(fragment,2,2,contextualElement);
           dom.insertBoundary(fragment, 0);
-          set(env, context, "cc", blockArguments[0]);
-          block(env, morph0, context, "lm-container", [], {"action": "escape", "clickAway": "outsideClick"}, child0, null);
-          content(env, morph1, context, "lf-overlay");
-          return fragment;
-        }
+          return morphs;
+        },
+        statements: [
+          ["block","lm-container",[],["action","escape","clickAway","outsideClick"],0,null],
+          ["content","lf-overlay"]
+        ],
+        locals: ["cc"],
+        templates: [child0]
       };
     }());
     return {
-      isHTMLBars: true,
-      revision: "Ember@1.12.1",
-      blockParams: 0,
+      meta: {
+        "revision": "Ember@1.13.0",
+        "loc": {
+          "source": null,
+          "start": {
+            "line": 1,
+            "column": 0
+          },
+          "end": {
+            "line": 9,
+            "column": 0
+          }
+        },
+        "moduleName": "giftwrap/templates/components/liquid-modal.hbs"
+      },
+      arity: 0,
       cachedFragment: null,
       hasRendered: false,
-      build: function build(dom) {
+      buildFragment: function buildFragment(dom) {
         var el0 = dom.createDocumentFragment();
         var el1 = dom.createComment("");
         dom.appendChild(el0, el1);
         return el0;
       },
-      render: function render(context, env, contextualElement) {
-        var dom = env.dom;
-        var hooks = env.hooks, get = hooks.get, block = hooks.block;
-        dom.detectNamespace(contextualElement);
-        var fragment;
-        if (env.useFragmentCache && dom.canClone) {
-          if (this.cachedFragment === null) {
-            fragment = this.build(dom);
-            if (this.hasRendered) {
-              this.cachedFragment = fragment;
-            } else {
-              this.hasRendered = true;
-            }
-          }
-          if (this.cachedFragment) {
-            fragment = dom.cloneNode(this.cachedFragment, true);
-          }
-        } else {
-          fragment = this.build(dom);
-        }
-        var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-        dom.insertBoundary(fragment, null);
+      buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+        var morphs = new Array(1);
+        morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
         dom.insertBoundary(fragment, 0);
-        block(env, morph0, context, "liquid-versions", [], {"name": "liquid-modal", "value": get(env, context, "currentContext")}, child0, null);
-        return fragment;
-      }
+        dom.insertBoundary(fragment, null);
+        return morphs;
+      },
+      statements: [
+        ["block","liquid-versions",[],["name","liquid-modal","value",["subexpr","@mut",[["get","currentContext"]],[]],"renderWhenFalse",false],0,null]
+      ],
+      locals: [],
+      templates: [child0]
     };
   }()));
 
@@ -8692,175 +8693,162 @@ define('giftwrap/templates/components/liquid-outlet', ['exports'], function (exp
 
   exports['default'] = Ember.HTMLBars.template((function() {
     var child0 = (function() {
+      var child0 = (function() {
+        var child0 = (function() {
+          return {
+            meta: {
+              "revision": "Ember@1.13.0",
+              "loc": {
+                "source": null,
+                "start": {
+                  "line": 14,
+                  "column": 6
+                },
+                "end": {
+                  "line": 16,
+                  "column": 6
+                }
+              },
+              "moduleName": "giftwrap/templates/components/liquid-outlet.hbs"
+            },
+            arity: 0,
+            cachedFragment: null,
+            hasRendered: false,
+            buildFragment: function buildFragment(dom) {
+              var el0 = dom.createDocumentFragment();
+              var el1 = dom.createComment("");
+              dom.appendChild(el0, el1);
+              return el0;
+            },
+            buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+              var morphs = new Array(1);
+              morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
+              dom.insertBoundary(fragment, 0);
+              dom.insertBoundary(fragment, null);
+              return morphs;
+            },
+            statements: [
+              ["inline","outlet",[["get","outletName"]],[]]
+            ],
+            locals: [],
+            templates: []
+          };
+        }());
+        return {
+          meta: {
+            "revision": "Ember@1.13.0",
+            "loc": {
+              "source": null,
+              "start": {
+                "line": 2,
+                "column": 2
+              },
+              "end": {
+                "line": 18,
+                "column": 2
+              }
+            },
+            "moduleName": "giftwrap/templates/components/liquid-outlet.hbs"
+          },
+          arity: 1,
+          cachedFragment: null,
+          hasRendered: false,
+          buildFragment: function buildFragment(dom) {
+            var el0 = dom.createDocumentFragment();
+            var el1 = dom.createComment("");
+            dom.appendChild(el0, el1);
+            return el0;
+          },
+          buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+            var morphs = new Array(1);
+            morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
+            dom.insertBoundary(fragment, 0);
+            dom.insertBoundary(fragment, null);
+            return morphs;
+          },
+          statements: [
+            ["block","set-outlet-state",[["get","outletName"],["get","version.outletState"]],[],0,null]
+          ],
+          locals: ["version"],
+          templates: [child0]
+        };
+      }());
       return {
-        isHTMLBars: true,
-        revision: "Ember@1.12.1",
-        blockParams: 1,
+        meta: {
+          "revision": "Ember@1.13.0",
+          "loc": {
+            "source": null,
+            "start": {
+              "line": 1,
+              "column": 0
+            },
+            "end": {
+              "line": 19,
+              "column": 0
+            }
+          },
+          "moduleName": "giftwrap/templates/components/liquid-outlet.hbs"
+        },
+        arity: 1,
         cachedFragment: null,
         hasRendered: false,
-        build: function build(dom) {
+        buildFragment: function buildFragment(dom) {
           var el0 = dom.createDocumentFragment();
           var el1 = dom.createComment("");
           dom.appendChild(el0, el1);
           return el0;
         },
-        render: function render(context, env, contextualElement, blockArguments) {
-          var dom = env.dom;
-          var hooks = env.hooks, set = hooks.set, get = hooks.get, inline = hooks.inline;
-          dom.detectNamespace(contextualElement);
-          var fragment;
-          if (env.useFragmentCache && dom.canClone) {
-            if (this.cachedFragment === null) {
-              fragment = this.build(dom);
-              if (this.hasRendered) {
-                this.cachedFragment = fragment;
-              } else {
-                this.hasRendered = true;
-              }
-            }
-            if (this.cachedFragment) {
-              fragment = dom.cloneNode(this.cachedFragment, true);
-            }
-          } else {
-            fragment = this.build(dom);
-          }
-          var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-          dom.insertBoundary(fragment, null);
+        buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+          var morphs = new Array(1);
+          morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
           dom.insertBoundary(fragment, 0);
-          set(env, context, "outletStateVersion", blockArguments[0]);
-          inline(env, morph0, context, "lf-outlet", [], {"staticState": get(env, context, "outletStateVersion")});
-          return fragment;
-        }
-      };
-    }());
-    return {
-      isHTMLBars: true,
-      revision: "Ember@1.12.1",
-      blockParams: 0,
-      cachedFragment: null,
-      hasRendered: false,
-      build: function build(dom) {
-        var el0 = dom.createDocumentFragment();
-        var el1 = dom.createComment("");
-        dom.appendChild(el0, el1);
-        return el0;
-      },
-      render: function render(context, env, contextualElement) {
-        var dom = env.dom;
-        var hooks = env.hooks, get = hooks.get, block = hooks.block;
-        dom.detectNamespace(contextualElement);
-        var fragment;
-        if (env.useFragmentCache && dom.canClone) {
-          if (this.cachedFragment === null) {
-            fragment = this.build(dom);
-            if (this.hasRendered) {
-              this.cachedFragment = fragment;
-            } else {
-              this.hasRendered = true;
-            }
-          }
-          if (this.cachedFragment) {
-            fragment = dom.cloneNode(this.cachedFragment, true);
-          }
-        } else {
-          fragment = this.build(dom);
-        }
-        var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-        dom.insertBoundary(fragment, null);
-        dom.insertBoundary(fragment, 0);
-        block(env, morph0, context, "liquid-with", [get(env, context, "outletState")], {"id": get(env, context, "innerId"), "class": get(env, context, "innerClass"), "use": get(env, context, "use"), "name": "liquid-outlet", "containerless": get(env, context, "containerless"), "growDuration": get(env, context, "growDuration"), "growPixelsPerSecond": get(env, context, "growPixelsPerSecond"), "growEasing": get(env, context, "growEasing"), "enableGrowth": get(env, context, "enableGrowth")}, child0, null);
-        return fragment;
-      }
-    };
-  }()));
-
-});
-define('giftwrap/templates/components/liquid-spacer', ['exports'], function (exports) {
-
-  'use strict';
-
-  exports['default'] = Ember.HTMLBars.template((function() {
-    var child0 = (function() {
-      return {
-        isHTMLBars: true,
-        revision: "Ember@1.12.1",
-        blockParams: 0,
-        cachedFragment: null,
-        hasRendered: false,
-        build: function build(dom) {
-          var el0 = dom.createDocumentFragment();
-          var el1 = dom.createTextNode("  ");
-          dom.appendChild(el0, el1);
-          var el1 = dom.createComment("");
-          dom.appendChild(el0, el1);
-          var el1 = dom.createTextNode("\n");
-          dom.appendChild(el0, el1);
-          return el0;
+          dom.insertBoundary(fragment, null);
+          return morphs;
         },
-        render: function render(context, env, contextualElement) {
-          var dom = env.dom;
-          var hooks = env.hooks, content = hooks.content;
-          dom.detectNamespace(contextualElement);
-          var fragment;
-          if (env.useFragmentCache && dom.canClone) {
-            if (this.cachedFragment === null) {
-              fragment = this.build(dom);
-              if (this.hasRendered) {
-                this.cachedFragment = fragment;
-              } else {
-                this.hasRendered = true;
-              }
-            }
-            if (this.cachedFragment) {
-              fragment = dom.cloneNode(this.cachedFragment, true);
-            }
-          } else {
-            fragment = this.build(dom);
-          }
-          var morph0 = dom.createMorphAt(fragment,1,1,contextualElement);
-          content(env, morph0, context, "yield");
-          return fragment;
-        }
+        statements: [
+          ["block","liquid-with",[["get","outletState"]],["id",["subexpr","@mut",[["get","id"]],[]],"class",["subexpr","@mut",[["get","class"]],[]],"use",["subexpr","@mut",[["get","use"]],[]],"name","liquid-outlet","containerless",["subexpr","@mut",[["get","containerless"]],[]],"growDuration",["subexpr","@mut",[["get","growDuration"]],[]],"growPixelsPerSecond",["subexpr","@mut",[["get","growPixelsPerSecond"]],[]],"growEasing",["subexpr","@mut",[["get","growEasing"]],[]],"enableGrowth",["subexpr","@mut",[["get","enableGrowth"]],[]]],0,null]
+        ],
+        locals: ["outletState"],
+        templates: [child0]
       };
     }());
     return {
-      isHTMLBars: true,
-      revision: "Ember@1.12.1",
-      blockParams: 0,
+      meta: {
+        "revision": "Ember@1.13.0",
+        "loc": {
+          "source": null,
+          "start": {
+            "line": 1,
+            "column": 0
+          },
+          "end": {
+            "line": 19,
+            "column": 21
+          }
+        },
+        "moduleName": "giftwrap/templates/components/liquid-outlet.hbs"
+      },
+      arity: 0,
       cachedFragment: null,
       hasRendered: false,
-      build: function build(dom) {
+      buildFragment: function buildFragment(dom) {
         var el0 = dom.createDocumentFragment();
         var el1 = dom.createComment("");
         dom.appendChild(el0, el1);
         return el0;
       },
-      render: function render(context, env, contextualElement) {
-        var dom = env.dom;
-        var hooks = env.hooks, get = hooks.get, block = hooks.block;
-        dom.detectNamespace(contextualElement);
-        var fragment;
-        if (env.useFragmentCache && dom.canClone) {
-          if (this.cachedFragment === null) {
-            fragment = this.build(dom);
-            if (this.hasRendered) {
-              this.cachedFragment = fragment;
-            } else {
-              this.hasRendered = true;
-            }
-          }
-          if (this.cachedFragment) {
-            fragment = dom.cloneNode(this.cachedFragment, true);
-          }
-        } else {
-          fragment = this.build(dom);
-        }
-        var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-        dom.insertBoundary(fragment, null);
+      buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+        var morphs = new Array(1);
+        morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
         dom.insertBoundary(fragment, 0);
-        block(env, morph0, context, "liquid-measured", [], {"measurements": get(env, context, "measurements")}, child0, null);
-        return fragment;
-      }
+        dom.insertBoundary(fragment, null);
+        return morphs;
+      },
+      statements: [
+        ["block","get-outlet-state",[["get","outletName"]],[],0,null]
+      ],
+      locals: [],
+      templates: [child0]
     };
   }()));
 
@@ -8874,164 +8862,159 @@ define('giftwrap/templates/components/liquid-versions', ['exports'], function (e
       var child0 = (function() {
         var child0 = (function() {
           return {
-            isHTMLBars: true,
-            revision: "Ember@1.12.1",
-            blockParams: 0,
+            meta: {
+              "revision": "Ember@1.13.0",
+              "loc": {
+                "source": null,
+                "start": {
+                  "line": 3,
+                  "column": 4
+                },
+                "end": {
+                  "line": 5,
+                  "column": 4
+                }
+              },
+              "moduleName": "giftwrap/templates/components/liquid-versions.hbs"
+            },
+            arity: 0,
             cachedFragment: null,
             hasRendered: false,
-            build: function build(dom) {
+            buildFragment: function buildFragment(dom) {
               var el0 = dom.createDocumentFragment();
               var el1 = dom.createComment("");
               dom.appendChild(el0, el1);
               return el0;
             },
-            render: function render(context, env, contextualElement) {
-              var dom = env.dom;
-              var hooks = env.hooks, get = hooks.get, inline = hooks.inline;
-              dom.detectNamespace(contextualElement);
-              var fragment;
-              if (env.useFragmentCache && dom.canClone) {
-                if (this.cachedFragment === null) {
-                  fragment = this.build(dom);
-                  if (this.hasRendered) {
-                    this.cachedFragment = fragment;
-                  } else {
-                    this.hasRendered = true;
-                  }
-                }
-                if (this.cachedFragment) {
-                  fragment = dom.cloneNode(this.cachedFragment, true);
-                }
-              } else {
-                fragment = this.build(dom);
-              }
-              var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-              dom.insertBoundary(fragment, null);
+            buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+              var morphs = new Array(1);
+              morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
               dom.insertBoundary(fragment, 0);
-              inline(env, morph0, context, "yield", [get(env, context, "version.value")], {});
-              return fragment;
-            }
+              dom.insertBoundary(fragment, null);
+              return morphs;
+            },
+            statements: [
+              ["inline","yield",[["get","version.value"]],[]]
+            ],
+            locals: [],
+            templates: []
           };
         }());
         return {
-          isHTMLBars: true,
-          revision: "Ember@1.12.1",
-          blockParams: 0,
+          meta: {
+            "revision": "Ember@1.13.0",
+            "loc": {
+              "source": null,
+              "start": {
+                "line": 2,
+                "column": 2
+              },
+              "end": {
+                "line": 6,
+                "column": 2
+              }
+            },
+            "moduleName": "giftwrap/templates/components/liquid-versions.hbs"
+          },
+          arity: 0,
           cachedFragment: null,
           hasRendered: false,
-          build: function build(dom) {
+          buildFragment: function buildFragment(dom) {
             var el0 = dom.createDocumentFragment();
             var el1 = dom.createComment("");
             dom.appendChild(el0, el1);
             return el0;
           },
-          render: function render(context, env, contextualElement) {
-            var dom = env.dom;
-            var hooks = env.hooks, get = hooks.get, block = hooks.block;
-            dom.detectNamespace(contextualElement);
-            var fragment;
-            if (env.useFragmentCache && dom.canClone) {
-              if (this.cachedFragment === null) {
-                fragment = this.build(dom);
-                if (this.hasRendered) {
-                  this.cachedFragment = fragment;
-                } else {
-                  this.hasRendered = true;
-                }
-              }
-              if (this.cachedFragment) {
-                fragment = dom.cloneNode(this.cachedFragment, true);
-              }
-            } else {
-              fragment = this.build(dom);
-            }
-            var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-            dom.insertBoundary(fragment, null);
+          buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+            var morphs = new Array(1);
+            morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
             dom.insertBoundary(fragment, 0);
-            block(env, morph0, context, "liquid-child", [], {"version": get(env, context, "version"), "visible": false, "didRender": "childDidRender", "class": get(env, context, "innerClass")}, child0, null);
-            return fragment;
-          }
+            dom.insertBoundary(fragment, null);
+            return morphs;
+          },
+          statements: [
+            ["block","liquid-child",[],["version",["subexpr","@mut",[["get","version"]],[]],"didRender","childDidRender","class",["subexpr","@mut",[["get","class"]],[]]],0,null]
+          ],
+          locals: [],
+          templates: [child0]
         };
       }());
       return {
-        isHTMLBars: true,
-        revision: "Ember@1.12.1",
-        blockParams: 1,
+        meta: {
+          "revision": "Ember@1.13.0",
+          "loc": {
+            "source": null,
+            "start": {
+              "line": 1,
+              "column": 0
+            },
+            "end": {
+              "line": 7,
+              "column": 0
+            }
+          },
+          "moduleName": "giftwrap/templates/components/liquid-versions.hbs"
+        },
+        arity: 1,
         cachedFragment: null,
         hasRendered: false,
-        build: function build(dom) {
+        buildFragment: function buildFragment(dom) {
           var el0 = dom.createDocumentFragment();
           var el1 = dom.createComment("");
           dom.appendChild(el0, el1);
           return el0;
         },
-        render: function render(context, env, contextualElement, blockArguments) {
-          var dom = env.dom;
-          var hooks = env.hooks, set = hooks.set, get = hooks.get, block = hooks.block;
-          dom.detectNamespace(contextualElement);
-          var fragment;
-          if (env.useFragmentCache && dom.canClone) {
-            if (this.cachedFragment === null) {
-              fragment = this.build(dom);
-              if (this.hasRendered) {
-                this.cachedFragment = fragment;
-              } else {
-                this.hasRendered = true;
-              }
-            }
-            if (this.cachedFragment) {
-              fragment = dom.cloneNode(this.cachedFragment, true);
-            }
-          } else {
-            fragment = this.build(dom);
-          }
-          var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-          dom.insertBoundary(fragment, null);
+        buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+          var morphs = new Array(1);
+          morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
           dom.insertBoundary(fragment, 0);
-          set(env, context, "version", blockArguments[0]);
-          block(env, morph0, context, "if", [get(env, context, "version.shouldRender")], {}, child0, null);
-          return fragment;
-        }
+          dom.insertBoundary(fragment, null);
+          return morphs;
+        },
+        statements: [
+          ["block","if",[["get","version.shouldRender"]],[],0,null]
+        ],
+        locals: ["version"],
+        templates: [child0]
       };
     }());
     return {
-      isHTMLBars: true,
-      revision: "Ember@1.12.1",
-      blockParams: 0,
+      meta: {
+        "revision": "Ember@1.13.0",
+        "loc": {
+          "source": null,
+          "start": {
+            "line": 1,
+            "column": 0
+          },
+          "end": {
+            "line": 8,
+            "column": 0
+          }
+        },
+        "moduleName": "giftwrap/templates/components/liquid-versions.hbs"
+      },
+      arity: 0,
       cachedFragment: null,
       hasRendered: false,
-      build: function build(dom) {
+      buildFragment: function buildFragment(dom) {
         var el0 = dom.createDocumentFragment();
         var el1 = dom.createComment("");
         dom.appendChild(el0, el1);
         return el0;
       },
-      render: function render(context, env, contextualElement) {
-        var dom = env.dom;
-        var hooks = env.hooks, get = hooks.get, block = hooks.block;
-        dom.detectNamespace(contextualElement);
-        var fragment;
-        if (env.useFragmentCache && dom.canClone) {
-          if (this.cachedFragment === null) {
-            fragment = this.build(dom);
-            if (this.hasRendered) {
-              this.cachedFragment = fragment;
-            } else {
-              this.hasRendered = true;
-            }
-          }
-          if (this.cachedFragment) {
-            fragment = dom.cloneNode(this.cachedFragment, true);
-          }
-        } else {
-          fragment = this.build(dom);
-        }
-        var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-        dom.insertBoundary(fragment, null);
+      buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+        var morphs = new Array(1);
+        morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
         dom.insertBoundary(fragment, 0);
-        block(env, morph0, context, "each", [get(env, context, "versions")], {}, child0, null);
-        return fragment;
-      }
+        dom.insertBoundary(fragment, null);
+        return morphs;
+      },
+      statements: [
+        ["block","each",[["get","versions"]],["key","guid"],0,null]
+      ],
+      locals: [],
+      templates: [child0]
     };
   }()));
 
@@ -9044,249 +9027,240 @@ define('giftwrap/templates/components/liquid-with', ['exports'], function (expor
     var child0 = (function() {
       var child0 = (function() {
         return {
-          isHTMLBars: true,
-          revision: "Ember@1.12.1",
-          blockParams: 1,
+          meta: {
+            "revision": "Ember@1.13.0",
+            "loc": {
+              "source": null,
+              "start": {
+                "line": 2,
+                "column": 2
+              },
+              "end": {
+                "line": 4,
+                "column": 2
+              }
+            },
+            "moduleName": "giftwrap/templates/components/liquid-with.hbs"
+          },
+          arity: 1,
           cachedFragment: null,
           hasRendered: false,
-          build: function build(dom) {
+          buildFragment: function buildFragment(dom) {
             var el0 = dom.createDocumentFragment();
             var el1 = dom.createComment("");
             dom.appendChild(el0, el1);
             return el0;
           },
-          render: function render(context, env, contextualElement, blockArguments) {
-            var dom = env.dom;
-            var hooks = env.hooks, set = hooks.set, get = hooks.get, inline = hooks.inline;
-            dom.detectNamespace(contextualElement);
-            var fragment;
-            if (env.useFragmentCache && dom.canClone) {
-              if (this.cachedFragment === null) {
-                fragment = this.build(dom);
-                if (this.hasRendered) {
-                  this.cachedFragment = fragment;
-                } else {
-                  this.hasRendered = true;
-                }
-              }
-              if (this.cachedFragment) {
-                fragment = dom.cloneNode(this.cachedFragment, true);
-              }
-            } else {
-              fragment = this.build(dom);
-            }
-            var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-            dom.insertBoundary(fragment, null);
+          buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+            var morphs = new Array(1);
+            morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
             dom.insertBoundary(fragment, 0);
-            set(env, context, "version", blockArguments[0]);
-            inline(env, morph0, context, "yield", [get(env, context, "version")], {});
-            return fragment;
-          }
+            dom.insertBoundary(fragment, null);
+            return morphs;
+          },
+          statements: [
+            ["inline","yield",[["get","version"]],[]]
+          ],
+          locals: ["version"],
+          templates: []
         };
       }());
       return {
-        isHTMLBars: true,
-        revision: "Ember@1.12.1",
-        blockParams: 0,
+        meta: {
+          "revision": "Ember@1.13.0",
+          "loc": {
+            "source": null,
+            "start": {
+              "line": 1,
+              "column": 0
+            },
+            "end": {
+              "line": 5,
+              "column": 0
+            }
+          },
+          "moduleName": "giftwrap/templates/components/liquid-with.hbs"
+        },
+        arity: 0,
         cachedFragment: null,
         hasRendered: false,
-        build: function build(dom) {
+        buildFragment: function buildFragment(dom) {
           var el0 = dom.createDocumentFragment();
           var el1 = dom.createComment("");
           dom.appendChild(el0, el1);
           return el0;
         },
-        render: function render(context, env, contextualElement) {
-          var dom = env.dom;
-          var hooks = env.hooks, get = hooks.get, block = hooks.block;
-          dom.detectNamespace(contextualElement);
-          var fragment;
-          if (env.useFragmentCache && dom.canClone) {
-            if (this.cachedFragment === null) {
-              fragment = this.build(dom);
-              if (this.hasRendered) {
-                this.cachedFragment = fragment;
-              } else {
-                this.hasRendered = true;
-              }
-            }
-            if (this.cachedFragment) {
-              fragment = dom.cloneNode(this.cachedFragment, true);
-            }
-          } else {
-            fragment = this.build(dom);
-          }
-          var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-          dom.insertBoundary(fragment, null);
+        buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+          var morphs = new Array(1);
+          morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
           dom.insertBoundary(fragment, 0);
-          block(env, morph0, context, "liquid-versions", [], {"value": get(env, context, "value"), "use": get(env, context, "use"), "name": get(env, context, "name"), "innerClass": get(env, context, "innerClass")}, child0, null);
-          return fragment;
-        }
+          dom.insertBoundary(fragment, null);
+          return morphs;
+        },
+        statements: [
+          ["block","liquid-versions",[],["value",["subexpr","@mut",[["get","attrs.value"]],[]],"use",["subexpr","@mut",[["get","use"]],[]],"name",["subexpr","@mut",[["get","name"]],[]],"class",["subexpr","@mut",[["get","class"]],[]]],0,null]
+        ],
+        locals: [],
+        templates: [child0]
       };
     }());
     var child1 = (function() {
       var child0 = (function() {
         var child0 = (function() {
           return {
-            isHTMLBars: true,
-            revision: "Ember@1.12.1",
-            blockParams: 1,
+            meta: {
+              "revision": "Ember@1.13.0",
+              "loc": {
+                "source": null,
+                "start": {
+                  "line": 14,
+                  "column": 4
+                },
+                "end": {
+                  "line": 16,
+                  "column": 4
+                }
+              },
+              "moduleName": "giftwrap/templates/components/liquid-with.hbs"
+            },
+            arity: 1,
             cachedFragment: null,
             hasRendered: false,
-            build: function build(dom) {
+            buildFragment: function buildFragment(dom) {
               var el0 = dom.createDocumentFragment();
               var el1 = dom.createComment("");
               dom.appendChild(el0, el1);
               return el0;
             },
-            render: function render(context, env, contextualElement, blockArguments) {
-              var dom = env.dom;
-              var hooks = env.hooks, set = hooks.set, get = hooks.get, inline = hooks.inline;
-              dom.detectNamespace(contextualElement);
-              var fragment;
-              if (env.useFragmentCache && dom.canClone) {
-                if (this.cachedFragment === null) {
-                  fragment = this.build(dom);
-                  if (this.hasRendered) {
-                    this.cachedFragment = fragment;
-                  } else {
-                    this.hasRendered = true;
-                  }
-                }
-                if (this.cachedFragment) {
-                  fragment = dom.cloneNode(this.cachedFragment, true);
-                }
-              } else {
-                fragment = this.build(dom);
-              }
-              var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-              dom.insertBoundary(fragment, null);
+            buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+              var morphs = new Array(1);
+              morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
               dom.insertBoundary(fragment, 0);
-              set(env, context, "version", blockArguments[0]);
-              inline(env, morph0, context, "yield", [get(env, context, "version")], {});
-              return fragment;
-            }
+              dom.insertBoundary(fragment, null);
+              return morphs;
+            },
+            statements: [
+              ["inline","yield",[["get","version"]],[]]
+            ],
+            locals: ["version"],
+            templates: []
           };
         }());
         return {
-          isHTMLBars: true,
-          revision: "Ember@1.12.1",
-          blockParams: 1,
+          meta: {
+            "revision": "Ember@1.13.0",
+            "loc": {
+              "source": null,
+              "start": {
+                "line": 6,
+                "column": 2
+              },
+              "end": {
+                "line": 17,
+                "column": 2
+              }
+            },
+            "moduleName": "giftwrap/templates/components/liquid-with.hbs"
+          },
+          arity: 1,
           cachedFragment: null,
           hasRendered: false,
-          build: function build(dom) {
+          buildFragment: function buildFragment(dom) {
             var el0 = dom.createDocumentFragment();
             var el1 = dom.createComment("");
             dom.appendChild(el0, el1);
             return el0;
           },
-          render: function render(context, env, contextualElement, blockArguments) {
-            var dom = env.dom;
-            var hooks = env.hooks, set = hooks.set, get = hooks.get, block = hooks.block;
-            dom.detectNamespace(contextualElement);
-            var fragment;
-            if (env.useFragmentCache && dom.canClone) {
-              if (this.cachedFragment === null) {
-                fragment = this.build(dom);
-                if (this.hasRendered) {
-                  this.cachedFragment = fragment;
-                } else {
-                  this.hasRendered = true;
-                }
-              }
-              if (this.cachedFragment) {
-                fragment = dom.cloneNode(this.cachedFragment, true);
-              }
-            } else {
-              fragment = this.build(dom);
-            }
-            var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-            dom.insertBoundary(fragment, null);
+          buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+            var morphs = new Array(1);
+            morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
             dom.insertBoundary(fragment, 0);
-            set(env, context, "container", blockArguments[0]);
-            block(env, morph0, context, "liquid-versions", [], {"value": get(env, context, "value"), "notify": get(env, context, "container"), "use": get(env, context, "use"), "name": get(env, context, "name")}, child0, null);
-            return fragment;
-          }
+            dom.insertBoundary(fragment, null);
+            return morphs;
+          },
+          statements: [
+            ["block","liquid-versions",[],["value",["subexpr","@mut",[["get","attrs.value"]],[]],"notify",["subexpr","@mut",[["get","container"]],[]],"use",["subexpr","@mut",[["get","use"]],[]],"name",["subexpr","@mut",[["get","name"]],[]]],0,null]
+          ],
+          locals: ["container"],
+          templates: [child0]
         };
       }());
       return {
-        isHTMLBars: true,
-        revision: "Ember@1.12.1",
-        blockParams: 0,
+        meta: {
+          "revision": "Ember@1.13.0",
+          "loc": {
+            "source": null,
+            "start": {
+              "line": 5,
+              "column": 0
+            },
+            "end": {
+              "line": 18,
+              "column": 0
+            }
+          },
+          "moduleName": "giftwrap/templates/components/liquid-with.hbs"
+        },
+        arity: 0,
         cachedFragment: null,
         hasRendered: false,
-        build: function build(dom) {
+        buildFragment: function buildFragment(dom) {
           var el0 = dom.createDocumentFragment();
           var el1 = dom.createComment("");
           dom.appendChild(el0, el1);
           return el0;
         },
-        render: function render(context, env, contextualElement) {
-          var dom = env.dom;
-          var hooks = env.hooks, get = hooks.get, block = hooks.block;
-          dom.detectNamespace(contextualElement);
-          var fragment;
-          if (env.useFragmentCache && dom.canClone) {
-            if (this.cachedFragment === null) {
-              fragment = this.build(dom);
-              if (this.hasRendered) {
-                this.cachedFragment = fragment;
-              } else {
-                this.hasRendered = true;
-              }
-            }
-            if (this.cachedFragment) {
-              fragment = dom.cloneNode(this.cachedFragment, true);
-            }
-          } else {
-            fragment = this.build(dom);
-          }
-          var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-          dom.insertBoundary(fragment, null);
+        buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+          var morphs = new Array(1);
+          morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
           dom.insertBoundary(fragment, 0);
-          block(env, morph0, context, "liquid-container", [], {"id": get(env, context, "innerId"), "class": get(env, context, "innerClass"), "growDuration": get(env, context, "growDuration"), "growPixelsPerSecond": get(env, context, "growPixelsPerSecond"), "growEasing": get(env, context, "growEasing"), "enableGrowth": get(env, context, "enableGrowth")}, child0, null);
-          return fragment;
-        }
+          dom.insertBoundary(fragment, null);
+          return morphs;
+        },
+        statements: [
+          ["block","liquid-container",[],["id",["subexpr","@mut",[["get","id"]],[]],"class",["subexpr","@mut",[["get","class"]],[]],"growDuration",["subexpr","@mut",[["get","growDuration"]],[]],"growPixelsPerSecond",["subexpr","@mut",[["get","growPixelsPerSecond"]],[]],"growEasing",["subexpr","@mut",[["get","growEasing"]],[]],"enableGrowth",["subexpr","@mut",[["get","enableGrowth"]],[]]],0,null]
+        ],
+        locals: [],
+        templates: [child0]
       };
     }());
     return {
-      isHTMLBars: true,
-      revision: "Ember@1.12.1",
-      blockParams: 0,
+      meta: {
+        "revision": "Ember@1.13.0",
+        "loc": {
+          "source": null,
+          "start": {
+            "line": 1,
+            "column": 0
+          },
+          "end": {
+            "line": 19,
+            "column": 0
+          }
+        },
+        "moduleName": "giftwrap/templates/components/liquid-with.hbs"
+      },
+      arity: 0,
       cachedFragment: null,
       hasRendered: false,
-      build: function build(dom) {
+      buildFragment: function buildFragment(dom) {
         var el0 = dom.createDocumentFragment();
         var el1 = dom.createComment("");
         dom.appendChild(el0, el1);
         return el0;
       },
-      render: function render(context, env, contextualElement) {
-        var dom = env.dom;
-        var hooks = env.hooks, get = hooks.get, block = hooks.block;
-        dom.detectNamespace(contextualElement);
-        var fragment;
-        if (env.useFragmentCache && dom.canClone) {
-          if (this.cachedFragment === null) {
-            fragment = this.build(dom);
-            if (this.hasRendered) {
-              this.cachedFragment = fragment;
-            } else {
-              this.hasRendered = true;
-            }
-          }
-          if (this.cachedFragment) {
-            fragment = dom.cloneNode(this.cachedFragment, true);
-          }
-        } else {
-          fragment = this.build(dom);
-        }
-        var morph0 = dom.createMorphAt(fragment,0,0,contextualElement);
-        dom.insertBoundary(fragment, null);
+      buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
+        var morphs = new Array(1);
+        morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
         dom.insertBoundary(fragment, 0);
-        block(env, morph0, context, "if", [get(env, context, "containerless")], {}, child0, child1);
-        return fragment;
-      }
+        dom.insertBoundary(fragment, null);
+        return morphs;
+      },
+      statements: [
+        ["block","if",[["get","containerless"]],[],0,1]
+      ],
+      locals: [],
+      templates: [child0, child1]
     };
   }()));
 
@@ -9462,22 +9436,51 @@ define('giftwrap/transitions/explode', ['exports', 'ember', 'liquid-fire'], func
       return liquid_fire.Promise.resolve();
     }
 
-    var oldPrefix = piece.pickOld || piece.pick || "";
-    var newPrefix = piece.pickNew || piece.pick || "";
+    // reduce the matchBy scope
+    if (piece.pick) {
+      context.oldElement = context.oldElement.find(piece.pick);
+      context.newElement = context.newElement.find(piece.pick);
+    }
 
-    var hits = Ember['default'].A(context.oldElement.find("" + oldPrefix + "[" + piece.matchBy + "]").toArray());
+    if (piece.pickOld) {
+      context.oldElement = context.oldElement.find(piece.pickOld);
+    }
+
+    if (piece.pickNew) {
+      context.newElement = context.newElement.find(piece.pickNew);
+    }
+
+    // use the fastest selector available
+    var selector;
+
+    if (piece.matchBy === "id") {
+      selector = function (attrValue) {
+        return "#" + attrValue;
+      };
+    } else if (piece.matchBy === "class") {
+      selector = function (attrValue) {
+        return "." + attrValue;
+      };
+    } else {
+      selector = function (attrValue) {
+        var escapedAttrValue = attrValue.replace(/'/g, "\\'");
+        return "[" + piece.matchBy + "='" + escapedAttrValue + "']";
+      };
+    }
+
+    var hits = Ember['default'].A(context.oldElement.find("[" + piece.matchBy + "]").toArray());
     return liquid_fire.Promise.all(hits.map(function (elt) {
-      var propValue = Ember['default'].$(elt).attr(piece.matchBy);
-      var selector = "[" + piece.matchBy + "=" + propValue + "]";
-      if (context.newElement.find("" + newPrefix + "" + selector).length > 0) {
-        return explodePiece(context, {
-          pickOld: "" + oldPrefix + "[" + piece.matchBy + "=" + propValue + "]",
-          pickNew: "" + newPrefix + "[" + piece.matchBy + "=" + propValue + "]",
-          use: piece.use
-        }, seen);
-      } else {
+      var attrValue = Ember['default'].$(elt).attr(piece.matchBy);
+
+      // if there is no match for a particular item just skip it
+      if (attrValue === "" || context.newElement.find(selector(attrValue)).length === 0) {
         return liquid_fire.Promise.resolve();
       }
+
+      return explodePiece(context, {
+        pick: selector(attrValue),
+        use: piece.use
+      }, seen);
     }));
   }
 

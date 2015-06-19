@@ -7,7 +7,7 @@ The versions of ember and ember-data must match what we are using in eureka othe
 ## Versions - from bower.json
 
 ```
-"ember": "1.12.0"
+"ember": "1.13.0"
 ```
 
 ## Addons
