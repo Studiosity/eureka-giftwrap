@@ -23,4 +23,10 @@ ember-autoresize
 ember install <addon_name>
 ember giftwrap
 ```
-Copy the `addons.map` and `addons.js` in `/wrappers` to the `addons` folder of the ember app in Eureka and `addons.css` to the addons folder under stylesheets for the classroom module in eureka.
+Copy the `addons.map` and `addons.js` in `/wrappers` to the `addons` folder of the ember app in Eureka and `addons.css` to the addons folder under stylesheets for the classroom module in eureka. Something like the following is what you want to type.
+```
+cp wrappers/addons.map ../eureka/app/classroom/assets/javascripts/classroom/addons/
+cp wrappers/addons.js ../eureka/app/classroom/assets/javascripts/classroom/addons/
+cp wrappers/addons.css ../eureka/app/classroom/assets/stylesheets/classroom/addons/
+```
+
