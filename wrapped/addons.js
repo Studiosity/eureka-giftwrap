@@ -4671,6 +4671,13 @@ return function (global, window, document, undefined) {
 /* The CSS spec mandates that the translateX/Y/Z transforms are %-relative to the element itself -- not its parent.
 Velocity, however, doesn't make this distinction. Thus, converting to or from the % unit with these subproperties
 will produce an inaccurate conversion value. The same issue exists with the cx/cy attributes of SVG circles and ellipses. */
+define("ember-attachable", ["ember-attachable/index", "ember", "exports"], function(__index__, __Ember__, __exports__) {
+  "use strict";
+  __Ember__["default"].keys(__index__).forEach(function(key){
+    __exports__[key] = __index__[key];
+  });
+});
+
 define("ember-autoresize", ["ember-autoresize/index", "ember", "exports"], function(__index__, __Ember__, __exports__) {
   "use strict";
   __Ember__["default"].keys(__index__).forEach(function(key){
@@ -4791,7 +4798,7 @@ define('ember-autoresize/mixins/autoresize', ['exports', 'dom-ruler', 'ember'], 
   function withUnits(number) {
     var unitlessNumber = parseInt(number + "", 10) + "";
     if (unitlessNumber === number + "") {
-      return "" + number + "px";
+      return number + "px";
     }
     return number;
   }
@@ -7760,6 +7767,109 @@ define('giftwrap/initializers/liquid-fire', ['exports', 'liquid-fire/router-dsl-
   };
 
 });
+define('giftwrap/mixins/attachable', ['exports', 'ember', 'ember-data', 'ic-ajax'], function (exports, Ember, DS, ic_ajax) {
+
+  'use strict';
+
+  exports['default'] = Ember['default'].Mixin.create({
+    attachment: null,
+    saveWithAttachment: function saveWithAttachment() {
+      return this.createWithAttachment();
+    },
+    createWithAttachment: function createWithAttachment() {
+      var adapter,
+          attachmentKey,
+          data,
+          formData,
+          promise,
+          root,
+          serializer,
+          url,
+          _this = this;
+      adapter = this.store.adapterFor(this.constructor);
+      serializer = this.store.serializerFor(this.constructor.typeKey);
+      attachmentKey = this.get('attachment');
+      data = Ember['default'].copy(this.serialize());
+      Ember['default'].makeArray(attachmentKey).forEach(function (key) {
+        data[key] = this.get(key);
+      }, this);
+      formData = new FormData();
+      root = this._rootKey();
+      Ember['default'].keys(data).forEach(function (key) {
+        if (!Ember['default'].isEmpty(data[key])) {
+          if (Ember['default'].isArray(data[key])) {
+            return data[key].forEach(function (val) {
+              return formData.append('' + root + '[' + key + '][]', val);
+            });
+          } else {
+            return formData.append('' + root + '[' + key + ']', data[key]);
+          }
+        }
+      });
+      url = adapter.buildURL(this.constructor.typeKey, this.get('id'));
+      this.adapterWillCommit();
+      promise = ic_ajax.request(url, {
+        type: this._requestType(),
+        data: formData,
+        dataType: 'json',
+        processData: false,
+        contentType: false,
+        xhr: function xhr() {
+          var xhr;
+          xhr = Ember['default'].$.ajaxSettings.xhr();
+          xhr.upload.onprogress = function (evt) {
+            return _this.set('uploadProgress', evt.loaded / evt.total * 100);
+          };
+          return xhr;
+        }
+      });
+      return this._commitWithAttachment(promise, adapter, serializer);
+    },
+    _rootKey: function _rootKey() {
+      return Ember['default'].String.underscore(Ember['default'].String.decamelize(this.constructor.typeKey));
+    },
+    _requestType: function _requestType() {
+      if (this.get('isNew')) {
+        return 'POST';
+      } else {
+        return 'PUT';
+      }
+    },
+    _commitWithAttachment: function _commitWithAttachment(promise, adapter, serializer) {
+      var operation, record, store, type;
+      store = this.store;
+      record = this;
+      type = record.constructor;
+      operation = '';
+      if (Ember['default'].get(record, 'isNew')) {
+        operation = 'createRecord';
+      } else if (Ember['default'].get(record, 'isDeleted')) {
+        operation = 'deleteRecord';
+      } else {
+        operation = 'updateRecord';
+      }
+      return promise.then(function (adapterPayload) {
+        var payload;
+        payload = void 0;
+        if (adapterPayload) {
+          payload = serializer.extract(store, type, adapterPayload, Ember['default'].get(record, 'id'), operation);
+        } else {
+          payload = adapterPayload;
+        }
+        store.didSaveRecord(record, payload);
+        return record;
+      }, function (reason) {
+        if (reason instanceof DS['default'].InvalidError) {
+          store.recordWasInvalid(record, reason.errors);
+        } else {
+          store.recordWasError(record, reason);
+        }
+        throw reason;
+      }, 'Uploading file with attachment');
+    }
+  });
+
+});
 define('giftwrap/services/clock', ['exports', 'ember'], function (exports, Ember) {
 
   'use strict';
@@ -9305,12 +9415,13 @@ define('giftwrap/transitions/explode', ['exports', 'ember', 'liquid-fire'], func
   function explode() {
     var _this = this;
 
+    var seenElements = {};
+    var sawBackgroundPiece = false;
+
     for (var _len = arguments.length, pieces = Array(_len), _key = 0; _key < _len; _key++) {
       pieces[_key] = arguments[_key];
     }
 
-    var seenElements = {};
-    var sawBackgroundPiece = false;
     var promises = pieces.map(function (piece) {
       if (piece.matchBy) {
         return matchAndExplode(_this, piece, seenElements);

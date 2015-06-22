@@ -15,12 +15,21 @@ The versions of ember and ember-data must match what we are using in eureka othe
 ```
 liquid-fire
 ember-autoresize
+ember-attachment
+```
+
+## First time setup
+
+```bash
+git clone https://github.com/TutoringAustralasia/eureka-giftwrap.git
+cd eureka-giftwrap
+npm install
 ```
 
 ## Adding new dependency
 
 ```bash
-ember install <addon_name>
+npm install <addon-name> --save-dev
 ember giftwrap
 ```
 Copy the `addons.map` and `addons.js` in `/wrapped` to the `addons` folder of the ember app in Eureka and `addons.css` to the addons folder under stylesheets for the classroom module in eureka. Something like the following is what you want to type.
